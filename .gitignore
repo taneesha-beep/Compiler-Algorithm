@@ -1,3 +1,5 @@
 build
 cmake-build*
 .idea
+.vs/
+algo_compiler_report.docx
