@@ -1,76 +1,21 @@
 # Algo Compiler
 
-A compiler for a simple algorithmic language, built in C++ as a college mini project. It takes a `.algo` source file and runs it through all four classic compiler stages: lexing, parsing, semantic analysis, and interpretation.
+A compiler for a simple algorithmic language, built from scratch in C++20 as a college mini project. Takes a `.algo` source file through all four classical compiler stages: lexical analysis, parsing, semantic analysis, and interpretation.
 
 ---
 
-## Project Structure
+## 👩‍💻 My Contributions
 
-```
-Compiler-Algo/
-├── CMakeLists.txt
-├── README.md
-└── src/
-    └── main.cpp
-```
+This was a team project. My specific contributions:
+
+- **Implemented the recursive descent parser** — the most technically demanding stage of the compiler. Built a hand-written parser that constructs a well-formed Abstract Syntax Tree from the token stream, enforcing correct operator precedence (multiplication/division before addition/subtraction) through grammar structure rather than a precedence table. Each grammar rule maps directly to a parsing function, making the implementation readable and extensible.
+- **Built the tree-walk interpreter** — the stage that gives the language its execution semantics. The interpreter walks the AST recursively, evaluates all arithmetic expressions with correct precedence, maintains a variable environment across statements, and executes `print` statements with output to stdout. Runtime errors (division by zero, undefined variables) are caught and reported cleanly.
 
 ---
 
-## Prerequisites
+## What It Does
 
-- macOS with Xcode Command Line Tools
-- CMake 3.20+
-
-Install both if you haven't already:
-
-```bash
-xcode-select --install
-brew install cmake
-```
-
----
-
-## Building
-
-```bash
-mkdir build
-cd build
-cmake ..
-make
-```
-
-This produces an executable called `algo` inside the `build/` folder.
-
----
-
-## Usage
-
-Write a `.algo` source file, then pass it to the compiler:
-
-```bash
-./build/algo path/to/your/program.algo
-```
-
----
-
-## The Language
-
-Your `.algo` programs support:
-
-| Feature | Syntax |
-|---|---|
-| Assign a number | `x = 5` |
-| Arithmetic | `y = x + 3 * 2` |
-| Use a variable | `z = x + y` |
-| Print a value | `print z` |
-
-Supported operators: `+`, `-`, `*`, `/`
-
-Operator precedence works correctly — `*` and `/` are evaluated before `+` and `-`.
-
-### Example Program
-
-Create a file called `program.algo`:
+Takes source code like this:
 
 ```
 x = 5 + 3
@@ -79,25 +24,11 @@ z = y - 4
 print z
 ```
 
-Run it:
-
-```bash
-./build/algo program.algo
-```
-
-Expected output:
+And runs it through four stages to produce:
 
 ```
-=== Source Code ===
-x = 5 + 3
-y = x * 2
-z = y - 4
-print z
-
 === Stage 1: Lexing ===
-  Token: [x]
-  Token: [=]
-  ...
+  Tokenised 4 statements
 
 === Stage 2: Parsing ===
   Parsed 4 statement(s) successfully.
@@ -113,45 +44,93 @@ print z
 
 ## Compiler Stages
 
-**Stage 1 — Lexer:** Reads the raw source text and breaks it into tokens (numbers, identifiers, operators, keywords).
+**Stage 1 — Lexer**
+Reads raw source text character by character. Groups characters into tokens (numbers, identifiers, operators, keywords). Silently discards whitespace. Appends a sentinel `END_OF_FILE` token to simplify parser bounds checking.
 
-**Stage 2 — Parser:** Takes the token list and builds an Abstract Syntax Tree (AST) that represents the structure and meaning of the code. Handles operator precedence correctly.
+**Stage 2 — Recursive Descent Parser**
+Converts the token stream into an Abstract Syntax Tree. Grammar rules are encoded directly as mutually recursive functions — `parseExpr()` calls `parseTerm()` which calls `parsePrimary()` — enforcing operator precedence through the call hierarchy rather than a lookup table.
 
-**Stage 3 — Semantic Analysis:** Validates that all variables are assigned before they are used. Throws a clear error if not.
+**Stage 3 — Semantic Analysis**
+Walks the AST before execution to catch use-before-assignment errors. Reports the offending variable name with a clear error message rather than a cryptic runtime crash.
 
-**Stage 4 — Interpreter:** Walks the AST, evaluates all expressions, and executes the program — printing output for every `print` statement.
+**Stage 4 — Tree-Walk Interpreter**
+Recursively evaluates the AST. Maintains a `std::unordered_map` as the variable environment. Executes `print` statements by evaluating the expression subtree and writing to stdout.
+
+---
+
+## Language Reference
+
+| Feature       | Syntax            |
+| ------------- | ----------------- |
+| Assignment    | `x = 5`           |
+| Arithmetic    | `y = x + 3 * 2`   |
+| Print         | `print z`         |
+| Operators     | `+` `-` `*` `/`   |
+
+Operator precedence is correct — `*` and `/` bind tighter than `+` and `-`.
 
 ---
 
 ## Error Handling
 
-The compiler gives clear error messages for common mistakes:
-
-| Error | Example | Message |
-|---|---|---|
-| Unknown character | `x = 5 @ 3` | `Unknown character: @` |
-| Variable used before assignment | `print z` before `z = ...` | `Semantic Error: Variable 'z' used before assignment` |
-| Division by zero | `x = 5 / 0` | `Runtime Error: Division by zero` |
-| Wrong number of arguments | `./algo` | `Insufficient arguments` |
-| File not found | `./algo missing.algo` | `Could not open file: missing.algo` |
-
----
-
-## Rebuilding After Changes
-
-If you edit `main.cpp`, just run:
-
-```bash
-cd build
-make
-```
-
-No need to re-run `cmake` unless you change `CMakeLists.txt`.
+| Error                        | Example input         | Message                                        |
+| ---------------------------- | --------------------- | ---------------------------------------------- |
+| Unknown character            | `x = 5 @ 3`           | `Unknown character: @`                         |
+| Use before assignment        | `print z` (no prior assign) | `Semantic Error: Variable 'z' used before assignment` |
+| Division by zero             | `x = 5 / 0`           | `Runtime Error: Division by zero`              |
+| Missing argument             | `./algo`              | `Insufficient arguments`                       |
+| File not found               | `./algo missing.algo` | `Could not open file: missing.algo`            |
 
 ---
 
 ## Tech Stack
 
 - **Language:** C++20
-- **Build System:** CMake
+- **Build System:** CMake 3.20+
 - **Compiler:** AppleClang (macOS) / GCC or Clang (Linux)
+
+---
+
+## Build & Run
+
+### Prerequisites
+
+```bash
+xcode-select --install   # macOS
+brew install cmake
+```
+
+### Build
+
+```bash
+mkdir build
+cd build
+cmake ..
+make
+```
+
+### Run
+
+```bash
+./build/algo path/to/program.algo
+```
+
+### Rebuild after changes
+
+```bash
+cd build && make
+```
+
+No need to re-run `cmake` unless `CMakeLists.txt` changes.
+
+---
+
+## Project Structure
+
+```
+Compiler-Algo/
+├── CMakeLists.txt
+├── README.md
+└── src/
+    └── main.cpp       # Full compiler — lexer, parser, semantic analyser, interpreter
+```
