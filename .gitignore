@@ -1,6 +1,5 @@
-build
+build/
 cmake-build*
-.idea
+.idea/
 .vs/
-algo_compiler_report.docx
 .DS_Store
