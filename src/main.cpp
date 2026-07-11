@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
     if (argc > 2)
     {
         std::cout << "Error: Too many arguments. Max 1 input file." << std::endl;
-        return 0;
+        return 1;
     }
     if (argc < 2)
     {
@@ -32,7 +32,7 @@ int main(int argc, char *argv[])
         std::cout << "Error: Insufficient arguments.\nUsage: " +
                           programName + " <input_file>"
                   << std::endl;
-        return 0;
+        return 1;
     }
 
     try
@@ -77,6 +77,7 @@ int main(int argc, char *argv[])
     catch (const std::exception &e)
     {
         std::cout << "Error: " << e.what() << std::endl;
+        return 1;
     }
 
     return 0;
