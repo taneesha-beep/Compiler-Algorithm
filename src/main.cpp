@@ -7,7 +7,7 @@
 #include <functional>
 #include <map>
 #include <set>
-using namespace std;
+#include <cctype>
 
 // ============================================================
 // STAGE 1: LEXER
@@ -29,13 +29,13 @@ enum class TokenType
 struct Token
 {
     TokenType type;
-    string value;
+    std::string value;
 };
 
-vector<Token> lex(const string &source)
+std::vector<Token> lex(const std::string &source)
 {
-    vector<Token> tokens;
-    size_t i = 0;
+    std::vector<Token> tokens;
+    std::size_t i = 0;
 
     while (i < source.size())
     {
@@ -49,10 +49,10 @@ vector<Token> lex(const string &source)
         }
 
         // Numbers
-        if (isdigit(c))
+        if (std::isdigit(static_cast<unsigned char>(c)))
         {
-            string num;
-            while (i < source.size() && isdigit(source[i]))
+            std::string num;
+            while (i < source.size() && std::isdigit(static_cast<unsigned char>(source[i])))
             {
                 num += source[i++];
             }
@@ -61,10 +61,10 @@ vector<Token> lex(const string &source)
         }
 
         // Identifiers and keywords (print)
-        if (isalpha(c))
+        if (std::isalpha(static_cast<unsigned char>(c)))
         {
-            string word;
-            while (i < source.size() && isalnum(source[i]))
+            std::string word;
+            while (i < source.size() && std::isalnum(static_cast<unsigned char>(source[i])))
             {
                 word += source[i++];
             }
@@ -98,7 +98,7 @@ vector<Token> lex(const string &source)
             tokens.push_back({TokenType::DIVIDE, "/"});
             break;
         default:
-            throw runtime_error(string("Unknown character: ") + c);
+            throw std::runtime_error(std::string("Unknown character: ") + c);
         }
         i++;
     }
@@ -111,46 +111,56 @@ vector<Token> lex(const string &source)
 // STAGE 2: PARSER — builds an AST (Abstract Syntax Tree)
 // ============================================================
 
+// Every kind of node in the tree
+enum class NodeType
+{
+    Assign,
+    BinOp,
+    Number,
+    Identifier,
+    Print
+};
+
 // Every node in the tree is one of these types
 struct ASTNode
 {
-    string type;  // "assign", "binop", "number", "identifier", "print"
-    string value; // holds number value or variable name or operator
-    shared_ptr<ASTNode> left;
-    shared_ptr<ASTNode> right;
+    NodeType type;
+    std::string value; // holds number value or variable name or operator
+    std::shared_ptr<ASTNode> left;
+    std::shared_ptr<ASTNode> right;
 };
 
-using Node = shared_ptr<ASTNode>;
+using Node = std::shared_ptr<ASTNode>;
 
-Node makeNode(string type, string value = "",
+Node makeNode(NodeType type, std::string value = "",
               Node left = nullptr, Node right = nullptr)
 {
-    return make_shared<ASTNode>(ASTNode{type, value, left, right});
+    return std::make_shared<ASTNode>(ASTNode{type, value, left, right});
 }
 
 // Parser class
 class Parser
 {
-    vector<Token> tokens;
-    size_t pos = 0;
+    std::vector<Token> tokens;
+    std::size_t pos = 0;
 
     Token current() { return tokens[pos]; }
     Token consume() { return tokens[pos++]; }
 
-    Token expect(TokenType type, const string &errMsg)
+    Token expect(TokenType type, const std::string &errMsg)
     {
         if (current().type != type)
-            throw runtime_error(errMsg);
+            throw std::runtime_error(errMsg);
         return consume();
     }
 
 public:
-    Parser(vector<Token> tokens) : tokens(tokens) {}
+    Parser(std::vector<Token> tokens) : tokens(tokens) {}
 
     // Parse a full program (list of statements)
-    vector<Node> parse()
+    std::vector<Node> parse()
     {
-        vector<Node> statements;
+        std::vector<Node> statements;
         while (current().type != TokenType::END_OF_FILE)
         {
             statements.push_back(parseStatement());
@@ -167,18 +177,18 @@ public:
         {
             consume(); // eat 'print'
             Node expr = parseExpr();
-            return makeNode("print", "", expr);
+            return makeNode(NodeType::Print, "", expr);
         }
 
         if (current().type == TokenType::IDENTIFIER)
         {
-            string varName = consume().value;
+            std::string varName = consume().value;
             expect(TokenType::EQUALS, "Expected '=' after variable name");
             Node expr = parseExpr();
-            return makeNode("assign", varName, expr);
+            return makeNode(NodeType::Assign, varName, expr);
         }
 
-        throw runtime_error("Unknown statement starting with: " + current().value);
+        throw std::runtime_error("Unknown statement starting with: " + current().value);
     }
 
     // Expression: handles + - * /
@@ -190,9 +200,9 @@ public:
         while (current().type == TokenType::PLUS ||
                current().type == TokenType::MINUS)
         {
-            string op = consume().value;
+            std::string op = consume().value;
             Node right = parseTerm();
-            left = makeNode("binop", op, left, right);
+            left = makeNode(NodeType::BinOp, op, left, right);
         }
 
         return left;
@@ -205,9 +215,9 @@ public:
         while (current().type == TokenType::MULTIPLY ||
                current().type == TokenType::DIVIDE)
         {
-            string op = consume().value;
+            std::string op = consume().value;
             Node right = parsePrimary();
-            left = makeNode("binop", op, left, right);
+            left = makeNode(NodeType::BinOp, op, left, right);
         }
 
         return left;
@@ -217,13 +227,13 @@ public:
     {
         if (current().type == TokenType::NUMBER)
         {
-            return makeNode("number", consume().value);
+            return makeNode(NodeType::Number, consume().value);
         }
         if (current().type == TokenType::IDENTIFIER)
         {
-            return makeNode("identifier", consume().value);
+            return makeNode(NodeType::Identifier, consume().value);
         }
-        throw runtime_error("Expected number or variable, got: " + current().value);
+        throw std::runtime_error("Expected number or variable, got: " + current().value);
     }
 };
 
@@ -234,24 +244,24 @@ public:
 // We just check: are all variables used in expressions
 // actually assigned before use?
 
-void semanticCheck(const vector<Node> &statements)
+void semanticCheck(const std::vector<Node> &statements)
 {
-    set<string> declared;
+    std::set<std::string> declared;
 
     for (auto &stmt : statements)
     {
-        if (stmt->type == "assign")
+        if (stmt->type == NodeType::Assign)
         {
             // Check right side before declaring left
-            function<void(Node)> checkExpr = [&](Node node)
+            std::function<void(Node)> checkExpr = [&](Node node)
             {
                 if (!node)
                     return;
-                if (node->type == "identifier")
+                if (node->type == NodeType::Identifier)
                 {
                     if (declared.find(node->value) == declared.end())
                     {
-                        throw runtime_error(
+                        throw std::runtime_error(
                             "Semantic Error: Variable '" + node->value +
                             "' used before assignment");
                     }
@@ -262,17 +272,17 @@ void semanticCheck(const vector<Node> &statements)
             checkExpr(stmt->left);        // check the expression
             declared.insert(stmt->value); // now declare variable
         }
-        else if (stmt->type == "print")
+        else if (stmt->type == NodeType::Print)
         {
-            function<void(Node)> checkExpr = [&](Node node)
+            std::function<void(Node)> checkExpr = [&](Node node)
             {
                 if (!node)
                     return;
-                if (node->type == "identifier")
+                if (node->type == NodeType::Identifier)
                 {
                     if (declared.find(node->value) == declared.end())
                     {
-                        throw runtime_error(
+                        throw std::runtime_error(
                             "Semantic Error: Variable '" + node->value +
                             "' used before assignment");
                     }
@@ -290,21 +300,21 @@ void semanticCheck(const vector<Node> &statements)
 // Evaluates the AST and prints results
 // ============================================================
 
-map<string, int> variables; // stores variable values at runtime
+std::map<std::string, int> variables; // stores variable values at runtime
 
 int evaluate(Node node)
 {
-    if (node->type == "number")
+    if (node->type == NodeType::Number)
     {
-        return stoi(node->value);
+        return std::stoi(node->value);
     }
-    if (node->type == "identifier")
+    if (node->type == NodeType::Identifier)
     {
         if (variables.find(node->value) == variables.end())
-            throw runtime_error("Runtime Error: Undefined variable '" + node->value + "'");
+            throw std::runtime_error("Runtime Error: Undefined variable '" + node->value + "'");
         return variables[node->value];
     }
-    if (node->type == "binop")
+    if (node->type == NodeType::BinOp)
     {
         int left = evaluate(node->left);
         int right = evaluate(node->right);
@@ -317,24 +327,24 @@ int evaluate(Node node)
         if (node->value == "/")
         {
             if (right == 0)
-                throw runtime_error("Runtime Error: Division by zero");
+                throw std::runtime_error("Runtime Error: Division by zero");
             return left / right;
         }
     }
-    throw runtime_error("Unknown node type: " + node->type);
+    throw std::runtime_error("Unknown node type");
 }
 
-void execute(const vector<Node> &statements)
+void execute(const std::vector<Node> &statements)
 {
     for (auto &stmt : statements)
     {
-        if (stmt->type == "assign")
+        if (stmt->type == NodeType::Assign)
         {
             variables[stmt->value] = evaluate(stmt->left);
         }
-        else if (stmt->type == "print")
+        else if (stmt->type == NodeType::Print)
         {
-            cout << evaluate(stmt->left) << endl;
+            std::cout << evaluate(stmt->left) << std::endl;
         }
     }
 }
@@ -345,65 +355,65 @@ void execute(const vector<Node> &statements)
 
 int main(int argc, char *argv[])
 {
+    if (argc > 2)
+    {
+        std::cout << "Error: Too many arguments. Max 1 input file." << std::endl;
+        return 0;
+    }
+    if (argc < 2)
+    {
+        std::string programName = argv[0];
+        std::size_t lastSlash = programName.find_last_of("/\\");
+        if (lastSlash != std::string::npos)
+            programName = programName.substr(lastSlash + 1);
 
-    string programName = argv[0];
-    size_t lastSlash = programName.find_last_of("/\\");
-    if (lastSlash != string::npos)
-        programName = programName.substr(lastSlash + 1);
+        std::cout << "Error: Insufficient arguments.\nUsage: " +
+                          programName + " <input_file>"
+                  << std::endl;
+        return 0;
+    }
 
     try
     {
-        if (argc == 2)
+        // Read input file
+        std::fstream inputFile(argv[1], std::ios::in);
+        if (!inputFile.is_open())
+            throw std::runtime_error("Could not open file: " + std::string(argv[1]));
+
+        std::stringstream ss;
+        ss << inputFile.rdbuf();
+        std::string source = ss.str();
+
+        std::cout << "=== Source Code ===" << std::endl;
+        std::cout << source << std::endl;
+
+        // Stage 1: Lex
+        std::cout << "=== Stage 1: Lexing ===" << std::endl;
+        std::vector<Token> tokens = lex(source);
+        for (auto &t : tokens)
         {
-            // Read input file
-            fstream inputFile(argv[1], ios::in);
-            if (!inputFile.is_open())
-                throw runtime_error("Could not open file: " + string(argv[1]));
-
-            stringstream ss;
-            ss << inputFile.rdbuf();
-            string source = ss.str();
-
-            cout << "=== Source Code ===" << endl;
-            cout << source << endl;
-
-            // Stage 1: Lex
-            cout << "=== Stage 1: Lexing ===" << endl;
-            vector<Token> tokens = lex(source);
-            for (auto &t : tokens)
-            {
-                if (t.type != TokenType::END_OF_FILE)
-                    cout << "  Token: [" << t.value << "]" << endl;
-            }
-
-            // Stage 2: Parse
-            cout << "=== Stage 2: Parsing ===" << endl;
-            Parser parser(tokens);
-            vector<Node> ast = parser.parse();
-            cout << "  Parsed " << ast.size() << " statement(s) successfully." << endl;
-
-            // Stage 3: Semantic Analysis
-            cout << "=== Stage 3: Semantic Analysis ===" << endl;
-            semanticCheck(ast);
-            cout << "  No semantic errors found." << endl;
-
-            // Stage 4: Execute
-            cout << "=== Stage 4: Output ===" << endl;
-            execute(ast);
+            if (t.type != TokenType::END_OF_FILE)
+                std::cout << "  Token: [" << t.value << "]" << std::endl;
         }
-        else if (argc > 2)
-        {
-            throw runtime_error("Too many arguments. Max 1 input file.");
-        }
-        else
-        {
-            throw runtime_error("Insufficient arguments.\nUsage: " +
-                                programName + " <input_file>");
-        }
+
+        // Stage 2: Parse
+        std::cout << "=== Stage 2: Parsing ===" << std::endl;
+        Parser parser(tokens);
+        std::vector<Node> ast = parser.parse();
+        std::cout << "  Parsed " << ast.size() << " statement(s) successfully." << std::endl;
+
+        // Stage 3: Semantic Analysis
+        std::cout << "=== Stage 3: Semantic Analysis ===" << std::endl;
+        semanticCheck(ast);
+        std::cout << "  No semantic errors found." << std::endl;
+
+        // Stage 4: Execute
+        std::cout << "=== Stage 4: Output ===" << std::endl;
+        execute(ast);
     }
-    catch (runtime_error &e)
+    catch (std::runtime_error &e)
     {
-        cout << "Error: " << e.what() << endl;
+        std::cout << "Error: " << e.what() << std::endl;
     }
 
     return 0;
