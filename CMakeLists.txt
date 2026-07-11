@@ -4,4 +4,4 @@ project(algo)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(algo src/main.cpp)
+add_executable(algo src/main.cpp src/lexer.cpp src/parser.cpp src/semantic.cpp src/interpreter.cpp)
