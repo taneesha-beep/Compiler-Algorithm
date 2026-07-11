@@ -146,7 +146,7 @@ No need to re-run `cmake` unless `CMakeLists.txt` changes.
 ## Project Structure
 
 ```
-Compiler-Algo/
+algo/
 ├── CMakeLists.txt
 ├── README.md
 └── src/
