@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
         Interpreter interpreter;
         interpreter.execute(ast);
     }
-    catch (std::runtime_error &e)
+    catch (const std::exception &e)
     {
         std::cout << "Error: " << e.what() << std::endl;
     }
