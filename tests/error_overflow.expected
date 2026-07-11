@@ -1,0 +1,12 @@
+=== Source Code ===
+print 9999999999
+
+=== Stage 1: Lexing ===
+  Token: [print]
+  Token: [9999999999]
+=== Stage 2: Parsing ===
+  Parsed 1 statement(s) successfully.
+=== Stage 3: Semantic Analysis ===
+  No semantic errors found.
+=== Stage 4: Output ===
+Error: Runtime Error: Integer literal out of range: 9999999999

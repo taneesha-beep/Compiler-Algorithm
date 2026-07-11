@@ -7,7 +7,18 @@ int Interpreter::evaluate(Node node)
 {
     if (node->type == NodeType::Number)
     {
-        return std::stoi(node->value);
+        try
+        {
+            return std::stoi(node->value);
+        }
+        catch (const std::out_of_range &)
+        {
+            throw std::runtime_error("Runtime Error: Integer literal out of range: " + node->value);
+        }
+        catch (const std::invalid_argument &)
+        {
+            throw std::runtime_error("Runtime Error: Invalid integer literal: " + node->value);
+        }
     }
     if (node->type == NodeType::Identifier)
     {
