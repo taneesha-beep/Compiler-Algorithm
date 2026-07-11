@@ -1,0 +1,30 @@
+=== Source Code ===
+x = 5 + 3
+y = x * 2
+z = y - 4
+print z
+
+=== Stage 1: Lexing ===
+  Token: [x]
+  Token: [=]
+  Token: [5]
+  Token: [+]
+  Token: [3]
+  Token: [y]
+  Token: [=]
+  Token: [x]
+  Token: [*]
+  Token: [2]
+  Token: [z]
+  Token: [=]
+  Token: [y]
+  Token: [-]
+  Token: [4]
+  Token: [print]
+  Token: [z]
+=== Stage 2: Parsing ===
+  Parsed 4 statement(s) successfully.
+=== Stage 3: Semantic Analysis ===
+  No semantic errors found.
+=== Stage 4: Output ===
+12

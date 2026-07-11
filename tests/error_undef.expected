@@ -1,0 +1,10 @@
+=== Source Code ===
+print z
+
+=== Stage 1: Lexing ===
+  Token: [print]
+  Token: [z]
+=== Stage 2: Parsing ===
+  Parsed 1 statement(s) successfully.
+=== Stage 3: Semantic Analysis ===
+Error: Semantic Error: Variable 'z' used before assignment

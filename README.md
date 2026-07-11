@@ -1,5 +1,7 @@
 # Algo Compiler
 
+[![CI](https://github.com/taneesha-beep/Compiler-Algorithm/actions/workflows/ci.yml/badge.svg)](https://github.com/taneesha-beep/Compiler-Algorithm/actions/workflows/ci.yml)
+
 A compiler for a simple algorithmic language, built from scratch in C++20 as a college mini project. Takes a `.algo` source file through all four classical compiler stages: lexical analysis, parsing, semantic analysis, and interpretation.
 
 ---

@@ -1,0 +1,16 @@
+=== Source Code ===
+print 2 + 3 * 4
+
+=== Stage 1: Lexing ===
+  Token: [print]
+  Token: [2]
+  Token: [+]
+  Token: [3]
+  Token: [*]
+  Token: [4]
+=== Stage 2: Parsing ===
+  Parsed 1 statement(s) successfully.
+=== Stage 3: Semantic Analysis ===
+  No semantic errors found.
+=== Stage 4: Output ===
+14
