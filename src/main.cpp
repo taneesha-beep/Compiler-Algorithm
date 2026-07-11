@@ -4,6 +4,9 @@
 #include <vector>
 #include <memory>
 #include <stdexcept>
+#include <functional>
+#include <map>
+#include <set>
 using namespace std;
 
 // ============================================================
@@ -230,8 +233,6 @@ public:
 
 // We just check: are all variables used in expressions
 // actually assigned before use?
-#include <map>
-#include <set>
 
 void semanticCheck(const vector<Node> &statements)
 {
