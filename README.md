@@ -103,6 +103,31 @@ Operator precedence is correct — `*` and `/` bind tighter than `+` and `-`.
 
 ---
 
+## Testing & CI
+
+Five golden-file test cases live in `tests/`, each a `.algo` input paired with its expected stdout:
+
+| Case               | Covers                                      |
+| ------------------ | -------------------------------------------- |
+| `basic`             | End-to-end run through all four stages        |
+| `precedence`        | `*`/`/` binding tighter than `+`/`-`          |
+| `error_div_zero`    | Runtime error: division by zero               |
+| `error_overflow`    | Runtime error: integer literal overflow       |
+| `error_undef`       | Semantic error: variable used before assignment |
+
+`CMakeLists.txt` globs every `tests/*.algo` file and registers it as a CTest test via `enable_testing()` / `add_test`, so new cases are picked up automatically — just add a matching `.algo` / `.expected` pair.
+
+Run the suite locally:
+
+```bash
+cmake -S . -B build && cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+CI (`.github/workflows/ci.yml`) builds and runs the full test suite on every push and pull request, across a matrix of GCC and Clang on Ubuntu.
+
+---
+
 ## Tech Stack
 
 - **Language:** C++20
