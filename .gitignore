@@ -3,3 +3,4 @@ cmake-build*
 .idea/
 .vs/
 .DS_Store
+Compiler-Algorithm-Technical-Report.md
