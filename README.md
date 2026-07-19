@@ -174,8 +174,17 @@ No need to re-run `cmake` unless `CMakeLists.txt` changes.
 
 ```
 algo/
-├── CMakeLists.txt
+├── CMakeLists.txt                       # Build config + CTest registration for tests/*.algo
 ├── README.md
-└── src/
-    └── main.cpp       # Full compiler — lexer, parser, semantic analyser, interpreter
+├── src/
+│   ├── main.cpp                         # Driver — wires the four stages together
+│   ├── token.h                          # Token type definitions
+│   ├── lexer.h / lexer.cpp              # Stage 1: source text → token stream
+│   ├── ast.h                            # AST node definitions
+│   ├── parser.h / parser.cpp            # Stage 2: token stream → AST
+│   ├── semantic.h / semantic.cpp        # Stage 3: use-before-assignment checks
+│   └── interpreter.h / interpreter.cpp  # Stage 4: tree-walk evaluation
+└── tests/
+    ├── *.algo / *.expected              # Golden-file test cases (input + expected output)
+    └── run_case.cmake                   # CTest driver script that runs a case and diffs output
 ```
