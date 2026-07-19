@@ -74,7 +74,7 @@ Converts the token stream into an Abstract Syntax Tree. Grammar rules are encode
 Walks the AST before execution to catch use-before-assignment errors. Reports the offending variable name with a clear error message rather than a cryptic runtime crash.
 
 **Stage 4 — Tree-Walk Interpreter**
-Recursively evaluates the AST. Maintains a `std::unordered_map` as the variable environment. Executes `print` statements by evaluating the expression subtree and writing to stdout.
+Recursively evaluates the AST. Maintains a `std::map` as the variable environment. Executes `print` statements by evaluating the expression subtree and writing to stdout.
 
 ---
 
