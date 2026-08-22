@@ -1,14 +1,13 @@
 # Algo Compiler
 
-[![CI](https://github.com/taneesha-beep/Compiler-Algorithm/actions/workflows/ci.yml/badge.svg)](https://github.com/taneesha-beep/Compiler-Algorithm/actions/workflows/ci.yml)
+[![CI](https://github.com/taneesha-beep/algo-vm/actions/workflows/ci.yml/badge.svg)](https://github.com/taneesha-beep/algo-vm/actions/workflows/ci.yml)
 
-A compiler for a simple algorithmic language, built from scratch in C++20 as a college mini project. Takes a `.algo` source file through all four classical compiler stages: lexical analysis, parsing, semantic analysis, and interpretation.
+A compiler for a simple algorithmic language, built from scratch in C++20. Takes a `.algo` source file through all four classical compiler stages: lexical analysis, parsing, semantic analysis, and interpretation.
 
----
-
-## 👩‍💻 My Contributions
-
-Originated as a four-stage team coursework compiler, preserved at tag v0-coursework. Everything after that commit — the resolver, functions and control flow, the bytecode compiler and VM, the benchmark harness — is mine (diff).
+*This repository began as a four-person college coursework project. That inherited state is
+tagged [`v0-coursework`](https://github.com/taneesha-beep/algo-vm/releases/tag/v0-coursework);
+everything since — [`v0-coursework...main`](https://github.com/taneesha-beep/algo-vm/compare/v0-coursework...main)
+— is solo work. The `master` branch is preserved as the frozen team artifact.*
 
 ---
 
@@ -154,7 +153,7 @@ make
 ### Run
 
 ```bash
-./build/algo path/to/program.algo
+./build/algo examples/program.algo
 ```
 
 ### Rebuild after changes
@@ -172,7 +171,10 @@ No need to re-run `cmake` unless `CMakeLists.txt` changes.
 ```
 algo/
 ├── CMakeLists.txt                       # Build config + CTest registration for tests/*.algo
+├── LICENSE
 ├── README.md
+├── examples/
+│   └── program.algo                     # Sample program
 ├── src/
 │   ├── main.cpp                         # Driver — wires the four stages together
 │   ├── token.h                          # Token type definitions

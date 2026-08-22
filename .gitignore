@@ -4,3 +4,5 @@ cmake-build*
 .vs/
 .DS_Store
 Compiler-Algorithm-Technical-Report.md
+COMPILER-ROADMAP.md
+CLAUDE.md
