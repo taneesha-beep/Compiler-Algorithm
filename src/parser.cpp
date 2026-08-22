@@ -28,17 +28,21 @@ Node Parser::parseStatement()
 {
     if (current().type == TokenType::PRINT)
     {
-        consume(); // eat 'print'
+        Token keyword = consume(); // eat 'print'
         Node expr = parseExpr();
-        return makeNode(NodeType::Print, "", expr);
+        // The statement covers the keyword and everything printed
+        return makeNode(NodeType::Print, "",
+                        mergeSpans(keyword.span, expr->span), expr);
     }
 
     if (current().type == TokenType::IDENTIFIER)
     {
-        std::string varName = consume().value;
+        Token name = consume();
         expect(TokenType::EQUALS, "Expected '=' after variable name");
         Node expr = parseExpr();
-        return makeNode(NodeType::Assign, varName, expr);
+        // The statement covers the variable name through the assigned value
+        return makeNode(NodeType::Assign, name.value,
+                        mergeSpans(name.span, expr->span), expr);
     }
 
     throw std::runtime_error("Unknown statement starting with: " + current().value);
@@ -53,7 +57,10 @@ Node Parser::parseExpr()
     {
         std::string op = consume().value;
         Node right = parseTerm();
-        left = makeNode(NodeType::BinOp, op, left, right);
+        // A BinOp runs from the first character of its left operand to the
+        // last character of its right — not merely the operator token
+        left = makeNode(NodeType::BinOp, op,
+                        mergeSpans(left->span, right->span), left, right);
     }
 
     return left;
@@ -68,7 +75,8 @@ Node Parser::parseTerm()
     {
         std::string op = consume().value;
         Node right = parsePrimary();
-        left = makeNode(NodeType::BinOp, op, left, right);
+        left = makeNode(NodeType::BinOp, op,
+                        mergeSpans(left->span, right->span), left, right);
     }
 
     return left;
@@ -78,11 +86,13 @@ Node Parser::parsePrimary()
 {
     if (current().type == TokenType::NUMBER)
     {
-        return makeNode(NodeType::Number, consume().value);
+        Token number = consume();
+        return makeNode(NodeType::Number, number.value, number.span);
     }
     if (current().type == TokenType::IDENTIFIER)
     {
-        return makeNode(NodeType::Identifier, consume().value);
+        Token name = consume();
+        return makeNode(NodeType::Identifier, name.value, name.span);
     }
     throw std::runtime_error("Expected number or variable, got: " + current().value);
 }
