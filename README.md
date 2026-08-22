@@ -8,10 +8,7 @@ A compiler for a simple algorithmic language, built from scratch in C++20 as a c
 
 ## 👩‍💻 My Contributions
 
-This was a team project. My specific contributions:
-
-- **Implemented the recursive descent parser** — the most technically demanding stage of the compiler. Built a hand-written parser that constructs a well-formed Abstract Syntax Tree from the token stream, enforcing correct operator precedence (multiplication/division before addition/subtraction) through grammar structure rather than a precedence table. Each grammar rule maps directly to a parsing function, making the implementation readable and extensible.
-- **Built the tree-walk interpreter** — the stage that gives the language its execution semantics. The interpreter walks the AST recursively, evaluates all arithmetic expressions with correct precedence, maintains a variable environment across statements, and executes `print` statements with output to stdout. Runtime errors (division by zero, undefined variables) are caught and reported cleanly.
+Originated as a four-stage team coursework compiler, preserved at tag v0-coursework. Everything after that commit — the resolver, functions and control flow, the bytecode compiler and VM, the benchmark harness — is mine (diff).
 
 ---
 
