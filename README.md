@@ -61,7 +61,7 @@ print z
 ## Compiler Stages
 
 **Stage 1 — Lexer**
-Reads raw source text character by character. Groups characters into tokens (numbers, identifiers, operators, keywords). Silently discards whitespace. Appends a sentinel `END_OF_FILE` token to simplify parser bounds checking.
+Reads raw source text character by character. Groups characters into tokens (numbers, identifiers, operators, keywords). Discards whitespace, but tracks line and column across it, so every token records the source span it came from. Appends a sentinel `END_OF_FILE` token to simplify parser bounds checking.
 
 **Stage 2 — Recursive Descent Parser**
 Converts the token stream into an Abstract Syntax Tree. Grammar rules are encoded directly as mutually recursive functions — `parseExpr()` calls `parseTerm()` which calls `parsePrimary()` — enforcing operator precedence through the call hierarchy rather than a lookup table.
@@ -101,7 +101,9 @@ Operator precedence is correct — `*` and `/` bind tighter than `+` and `-`.
 
 ## Testing & CI
 
-Five golden-file test cases live in `tests/`, each a `.algo` input paired with its expected stdout:
+The suite is six CTest cases: five golden-file cases and one unit test.
+
+Golden-file cases live in `tests/`, each a `.algo` input paired with its expected stdout:
 
 | Case               | Covers                                      |
 | ------------------ | -------------------------------------------- |
@@ -112,6 +114,8 @@ Five golden-file test cases live in `tests/`, each a `.algo` input paired with i
 | `error_undef`       | Semantic error: variable used before assignment |
 
 `CMakeLists.txt` globs every `tests/*.algo` file and registers it as a CTest test via `enable_testing()` / `add_test`, so new cases are picked up automatically — just add a matching `.algo` / `.expected` pair.
+
+Golden-file cases compare stdout, so they cannot assert a value that never reaches it. Unit tests cover those. The sources minus `main.cpp` build as an `algo_core` library, and a unit test is a plain binary that links it with its own `main()` — a failed check writes to stderr and the process exits non-zero, which is all CTest reads. There is no third-party test framework, and the project has no external dependencies. `tests/span_test.cpp` is the first: it checks the line, column and length that the lexer and parser attach to every token and AST node. Unit tests are registered one explicit target each, since a glob over compiled sources would not re-run when a file is added.
 
 Run the suite locally:
 
@@ -170,14 +174,14 @@ No need to re-run `cmake` unless `CMakeLists.txt` changes.
 
 ```
 algo/
-├── CMakeLists.txt                       # Build config + CTest registration for tests/*.algo
+├── CMakeLists.txt                       # algo_core library, algo driver, CTest registration
 ├── LICENSE
 ├── README.md
 ├── examples/
 │   └── program.algo                     # Sample program
 ├── src/
 │   ├── main.cpp                         # Driver — wires the four stages together
-│   ├── token.h                          # Token type definitions
+│   ├── token.h                          # Token and source-span definitions
 │   ├── lexer.h / lexer.cpp              # Stage 1: source text → token stream
 │   ├── ast.h                            # AST node definitions
 │   ├── parser.h / parser.cpp            # Stage 2: token stream → AST
@@ -185,5 +189,6 @@ algo/
 │   └── interpreter.h / interpreter.cpp  # Stage 4: tree-walk evaluation
 └── tests/
     ├── *.algo / *.expected              # Golden-file test cases (input + expected output)
+    ├── span_test.cpp                    # Unit test: source spans on tokens and AST nodes
     └── run_case.cmake                   # CTest driver script that runs a case and diffs output
 ```
