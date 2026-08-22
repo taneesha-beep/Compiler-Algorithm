@@ -22,7 +22,17 @@ z = y - 4
 print z
 ```
 
-And runs it through four stages to produce:
+And runs it through four stages. Standard output carries what the program printed, and nothing else:
+
+```
+12
+```
+
+The stages narrate themselves only when asked. `--trace` writes that commentary to **stderr**, so `algo prog.algo > out.txt` captures the program's output alone whether the flag is on or off:
+
+```bash
+./build/algo --trace tests/basic.algo
+```
 
 ```
 === Source Code ===
@@ -30,30 +40,17 @@ x = 5 + 3
 y = x * 2
 z = y - 4
 print z
+
 === Stage 1: Lexing ===
   Token: [x]
   Token: [=]
   Token: [5]
-  Token: [+]
-  Token: [3]
-  Token: [y]
-  Token: [=]
-  Token: [x]
-  Token: [*]
-  Token: [2]
-  Token: [z]
-  Token: [=]
-  Token: [y]
-  Token: [-]
-  Token: [4]
-  Token: [print]
-  Token: [z]
+  ...
 === Stage 2: Parsing ===
   Parsed 4 statement(s) successfully.
 === Stage 3: Semantic Analysis ===
   No semantic errors found.
 === Stage 4: Output ===
-12
 ```
 
 ---
@@ -67,7 +64,7 @@ Reads raw source text character by character. Groups characters into tokens (num
 Converts the token stream into an Abstract Syntax Tree. Grammar rules are encoded directly as mutually recursive functions — `parseExpr()` calls `parseTerm()` which calls `parsePrimary()` — enforcing operator precedence through the call hierarchy rather than a lookup table.
 
 **Stage 3 — Semantic Analysis**
-Walks the AST before execution to catch use-before-assignment errors. Reports the offending variable name with a clear error message rather than a cryptic runtime crash.
+Walks the AST before execution to catch use-before-assignment errors. Points a caret at the *use*, not at the missing assignment — the offending node is the identifier itself.
 
 **Stage 4 — Tree-Walk Interpreter**
 Recursively evaluates the AST. Maintains a `std::map` as the variable environment. Executes `print` statements by evaluating the expression subtree and writing to stdout.
@@ -89,21 +86,38 @@ Operator precedence is correct — `*` and `/` bind tighter than `+` and `-`.
 
 ## Error Handling
 
-| Error                        | Example input         | Message                                        |
-| ---------------------------- | --------------------- | ---------------------------------------------- |
-| Unknown character            | `x = 5 @ 3`           | `Unknown character: @`                         |
-| Use before assignment        | `print z` (no prior assign) | `Semantic Error: Variable 'z' used before assignment` |
-| Division by zero             | `x = 5 / 0`           | `Runtime Error: Division by zero`              |
-| Missing argument             | `./algo`              | `Insufficient arguments`                       |
-| File not found               | `./algo missing.algo` | `Could not open file: missing.algo`            |
+Every error is written to **stderr** as a diagnostic carrying the file, line and column it came from, the source line echoed, and a caret under the offending span:
+
+```
+$ ./build/algo error_undef.algo
+error_undef.algo:1:7: error: variable 'z' used before assignment
+print z
+      ^
+```
+
+The span comes from the stage that raised the error; the path and source text come from the driver, which is the only part of the program that has them.
+
+| Error                 | Example input               | Message                                        | Exit |
+| --------------------- | --------------------------- | ---------------------------------------------- | ---- |
+| Unknown character     | `x = 5 @ 3`                 | `unknown character '@'`                        | 65   |
+| Syntax error          | `x 5`                       | `expected '=' after variable name`             | 65   |
+| Use before assignment | `print z` (no prior assign) | `variable 'z' used before assignment`          | 65   |
+| Literal out of range  | `print 9999999999`          | `integer literal out of range: 9999999999`     | 65   |
+| Division by zero      | `x = 5 / 0`                 | `division by zero`                             | 70   |
+| Missing argument      | `./algo`                    | `no input file`                                | 64   |
+| File not found        | `./algo missing.algo`       | `could not open file: missing.algo`            | 66   |
+
+Exit codes are sysexits-style: `0` success, `64` bad command line, `65` compile-time error, `66` unreadable input file, `70` runtime fault.
+
+A literal too wide for the value type is classed **compile-time**, not runtime, even though it is currently detected during evaluation — it is a property of the token's text, not of anything the program computes.
 
 ---
 
 ## Testing & CI
 
-The suite is six CTest cases: five golden-file cases and one unit test.
+The suite is seven CTest cases: five golden-file cases and two unit tests.
 
-Golden-file cases live in `tests/`, each a `.algo` input paired with its expected stdout:
+Golden-file cases live in `tests/`, each a `.algo` input paired with the output it should produce:
 
 | Case               | Covers                                      |
 | ------------------ | -------------------------------------------- |
@@ -113,9 +127,20 @@ Golden-file cases live in `tests/`, each a `.algo` input paired with its expecte
 | `error_overflow`    | Runtime error: integer literal overflow       |
 | `error_undef`       | Semantic error: variable used before assignment |
 
+Four of the five carry all three golden files; `precedence` deliberately carries only `.expected`, so the optional-comparison path stays exercised.
+
+A case compares up to three things. `<case>.expected` is stdout and is required. `<case>.expected_err` is stderr and `<case>.expected_code` is the process exit code; both are optional, and an absent file means *do not check* rather than *expect empty* — so a case that does not care what it exits with simply omits the file.
+
 `CMakeLists.txt` globs every `tests/*.algo` file and registers it as a CTest test via `enable_testing()` / `add_test`, so new cases are picked up automatically — just add a matching `.algo` / `.expected` pair.
 
-Golden-file cases compare stdout, so they cannot assert a value that never reaches it. Unit tests cover those. The sources minus `main.cpp` build as an `algo_core` library, and a unit test is a plain binary that links it with its own `main()` — a failed check writes to stderr and the process exits non-zero, which is all CTest reads. There is no third-party test framework, and the project has no external dependencies. `tests/span_test.cpp` is the first: it checks the line, column and length that the lexer and parser attach to every token and AST node. Unit tests are registered one explicit target each, since a glob over compiled sources would not re-run when a file is added.
+`tests/run_case.cmake` runs the interpreter **from `tests/` with a bare filename**, not with an absolute path. A diagnostic prints the path it was given verbatim, so an absolute one would write the checkout's own location into a golden file and fail on any other machine.
+
+Golden-file cases compare streams, so they cannot assert a value that never reaches one. Unit tests cover those. The sources minus `main.cpp` build as an `algo_core` library, and a unit test is a plain binary that links it with its own `main()` — a failed check writes to stderr and the process exits non-zero, which is all CTest reads. There is no third-party test framework, and the project has no external dependencies. Unit tests are registered one explicit target each, since a glob over compiled sources would not re-run when a file is added.
+
+| Unit test                   | Covers                                                        |
+| --------------------------- | ------------------------------------------------------------- |
+| `tests/span_test.cpp`       | The line, column and length the lexer and parser attach to every token and AST node |
+| `tests/diagnostic_test.cpp` | The rendered form of a diagnostic — caret geometry, tab alignment, and which error class each site raises |
 
 Run the suite locally:
 
@@ -160,6 +185,12 @@ make
 ./build/algo examples/program.algo
 ```
 
+Add `--trace` to see the stages narrate themselves on stderr:
+
+```bash
+./build/algo --trace examples/program.algo
+```
+
 ### Rebuild after changes
 
 ```bash
@@ -180,15 +211,20 @@ algo/
 ├── examples/
 │   └── program.algo                     # Sample program
 ├── src/
-│   ├── main.cpp                         # Driver — wires the four stages together
+│   ├── main.cpp                         # Driver — argument handling, --trace, and the catch site
 │   ├── token.h                          # Token and source-span definitions
+│   ├── diagnostic.h / diagnostic.cpp    # Diagnostic type, renderer, error classes, exit codes
 │   ├── lexer.h / lexer.cpp              # Stage 1: source text → token stream
 │   ├── ast.h                            # AST node definitions
 │   ├── parser.h / parser.cpp            # Stage 2: token stream → AST
 │   ├── semantic.h / semantic.cpp        # Stage 3: use-before-assignment checks
 │   └── interpreter.h / interpreter.cpp  # Stage 4: tree-walk evaluation
 └── tests/
-    ├── *.algo / *.expected              # Golden-file test cases (input + expected output)
+    ├── *.algo                           # Golden-file case inputs
+    ├── *.expected                       # Expected stdout (required)
+    ├── *.expected_err                   # Expected stderr (optional)
+    ├── *.expected_code                  # Expected exit code (optional)
     ├── span_test.cpp                    # Unit test: source spans on tokens and AST nodes
-    └── run_case.cmake                   # CTest driver script that runs a case and diffs output
+    ├── diagnostic_test.cpp              # Unit test: diagnostic rendering and error classification
+    └── run_case.cmake                   # CTest driver script that runs a case and compares it
 ```
