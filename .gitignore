@@ -3,6 +3,14 @@ cmake-build*
 .idea/
 .vs/
 .DS_Store
-Compiler-Algorithm-Technical-Report.md
-COMPILER-ROADMAP.md
-CLAUDE.md
+
+# Working documents stay out of the repository — the roadmap, CLAUDE.md, the
+# technical report, and any scratch notes dropped at the root. README.md is the
+# single exception: it is the public face of the project.
+#
+# Anchored to the root on purpose. `docs/` is deliberately NOT covered, because
+# the roadmap requires docs/GRAMMAR.md (item 1.5), docs/BYTECODE.md (4.5) and
+# docs/MEASUREMENT.md (2.1, 5.3) to be committed deliverables. Widening this to
+# a bare `*.md` would silently ignore all three.
+/*.md
+!/README.md
