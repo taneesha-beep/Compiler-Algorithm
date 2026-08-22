@@ -9,4 +9,3 @@ print 9999999999
 === Stage 3: Semantic Analysis ===
   No semantic errors found.
 === Stage 4: Output ===
-Error: Runtime Error: Integer literal out of range: 9999999999

@@ -2,7 +2,8 @@
 
 #include <functional>
 #include <set>
-#include <stdexcept>
+
+#include "diagnostic.h"
 
 void semanticCheck(const std::vector<Node> &statements)
 {
@@ -16,9 +17,11 @@ void semanticCheck(const std::vector<Node> &statements)
         {
             if (declared.find(node->value) == declared.end())
             {
-                throw std::runtime_error(
-                    "Semantic Error: Variable '" + node->value +
-                    "' used before assignment");
+                // The caret belongs on the use, not the declaration that is
+                // missing — the offending node is the identifier itself.
+                throw CompileError(Diagnostic{
+                    Severity::Error, node->span,
+                    "variable '" + node->value + "' used before assignment"});
             }
         }
         checkExpr(node->left);

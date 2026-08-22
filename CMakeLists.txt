@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 # The front end and engines, built once and shared. `main.cpp` stays out of it
 # so that a test binary can link the same objects alongside its own main().
 add_library(algo_core STATIC
+    src/diagnostic.cpp
     src/lexer.cpp
     src/parser.cpp
     src/semantic.cpp
@@ -26,6 +27,10 @@ enable_testing()
 add_executable(span_test tests/span_test.cpp)
 target_link_libraries(span_test PRIVATE algo_core)
 add_test(NAME span_test COMMAND span_test)
+
+add_executable(diagnostic_test tests/diagnostic_test.cpp)
+target_link_libraries(diagnostic_test PRIVATE algo_core)
+add_test(NAME diagnostic_test COMMAND diagnostic_test)
 
 # Golden-file cases: run tests/<name>.algo and compare stdout against
 # tests/<name>.expected.

@@ -1,14 +1,30 @@
 #include "parser.h"
 
-#include <stdexcept>
+#include "diagnostic.h"
+
+namespace
+{
+
+// How a token reads inside a message. The end-of-file token has no text, so
+// quoting its empty value would render as `got: ''`.
+std::string describe(const Token &token)
+{
+    if (token.type == TokenType::END_OF_FILE)
+        return "end of file";
+    return "'" + token.value + "'";
+}
+
+} // namespace
 
 Token Parser::current() { return tokens[pos]; }
 Token Parser::consume() { return tokens[pos++]; }
 
 Token Parser::expect(TokenType type, const std::string &errMsg)
 {
+    // The token that was found is what the caret should point at: it is the
+    // text the reader has to change.
     if (current().type != type)
-        throw std::runtime_error(errMsg);
+        throw CompileError(Diagnostic{Severity::Error, current().span, errMsg});
     return consume();
 }
 
@@ -38,14 +54,16 @@ Node Parser::parseStatement()
     if (current().type == TokenType::IDENTIFIER)
     {
         Token name = consume();
-        expect(TokenType::EQUALS, "Expected '=' after variable name");
+        expect(TokenType::EQUALS, "expected '=' after variable name");
         Node expr = parseExpr();
         // The statement covers the variable name through the assigned value
         return makeNode(NodeType::Assign, name.value,
                         mergeSpans(name.span, expr->span), expr);
     }
 
-    throw std::runtime_error("Unknown statement starting with: " + current().value);
+    throw CompileError(Diagnostic{
+        Severity::Error, current().span,
+        "expected a statement, found " + describe(current())});
 }
 
 Node Parser::parseExpr()
@@ -94,5 +112,7 @@ Node Parser::parsePrimary()
         Token name = consume();
         return makeNode(NodeType::Identifier, name.value, name.span);
     }
-    throw std::runtime_error("Expected number or variable, got: " + current().value);
+    throw CompileError(Diagnostic{
+        Severity::Error, current().span,
+        "expected a number or a variable name, found " + describe(current())});
 }

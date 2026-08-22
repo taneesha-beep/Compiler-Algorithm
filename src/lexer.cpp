@@ -1,7 +1,8 @@
 #include "lexer.h"
 
 #include <cctype>
-#include <stdexcept>
+
+#include "diagnostic.h"
 
 std::vector<Token> lex(const std::string &source)
 {
@@ -89,7 +90,9 @@ std::vector<Token> lex(const std::string &source)
             tokens.push_back({TokenType::DIVIDE, "/", span});
             break;
         default:
-            throw std::runtime_error(std::string("Unknown character: ") + c);
+            throw CompileError(Diagnostic{
+                Severity::Error, span,
+                std::string("unknown character '") + c + "'"});
         }
         i++;
         col++;

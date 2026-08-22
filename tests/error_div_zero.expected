@@ -12,4 +12,3 @@ x = 5 / 0
 === Stage 3: Semantic Analysis ===
   No semantic errors found.
 === Stage 4: Output ===
-Error: Runtime Error: Division by zero

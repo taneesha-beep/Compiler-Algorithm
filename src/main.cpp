@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "diagnostic.h"
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
@@ -15,37 +16,60 @@
 // MAIN
 // ============================================================
 
+namespace
+{
+
+// argv[0] with any directory stripped, for the leading name on a diagnostic
+// that has no source position to print instead.
+std::string programName(int argc, char *argv[])
+{
+    if (argc < 1 || argv[0] == nullptr)
+        return "algo";
+    std::string name = argv[0];
+    std::size_t lastSlash = name.find_last_of("/\\");
+    if (lastSlash != std::string::npos)
+        name = name.substr(lastSlash + 1);
+    return name;
+}
+
+} // namespace
+
 int main(int argc, char *argv[])
 {
+    const std::string program = programName(argc, argv);
+
     if (argc > 2)
     {
-        std::cout << "Error: Too many arguments. Max 1 input file." << std::endl;
-        return 1;
+        std::cerr << renderToolError(program,
+                                     "too many arguments: at most one input file");
+        return ExitCode::Usage;
     }
     if (argc < 2)
     {
-        std::string programName = argv[0];
-        std::size_t lastSlash = programName.find_last_of("/\\");
-        if (lastSlash != std::string::npos)
-            programName = programName.substr(lastSlash + 1);
-
-        std::cout << "Error: Insufficient arguments.\nUsage: " +
-                          programName + " <input_file>"
-                  << std::endl;
-        return 1;
+        std::cerr << renderToolError(program, "no input file")
+                  << "usage: " << program << " <input_file>" << std::endl;
+        return ExitCode::Usage;
     }
+
+    // The path and the source text are read here, before the stages run,
+    // because the renderer needs both and no stage has them: an error is
+    // thrown from the lexer, parser, resolver or interpreter carrying only a
+    // span, and this is the one place that knows which file that span is in.
+    const std::string path = argv[1];
+
+    std::ifstream inputFile(path);
+    if (!inputFile.is_open())
+    {
+        std::cerr << renderToolError(program, "could not open file: " + path);
+        return ExitCode::NoInput;
+    }
+
+    std::stringstream ss;
+    ss << inputFile.rdbuf();
+    const std::string source = ss.str();
 
     try
     {
-        // Read input file
-        std::fstream inputFile(argv[1], std::ios::in);
-        if (!inputFile.is_open())
-            throw std::runtime_error("Could not open file: " + std::string(argv[1]));
-
-        std::stringstream ss;
-        ss << inputFile.rdbuf();
-        std::string source = ss.str();
-
         std::cout << "=== Source Code ===" << std::endl;
         std::cout << source << std::endl;
 
@@ -74,11 +98,23 @@ int main(int argc, char *argv[])
         Interpreter interpreter;
         interpreter.execute(ast);
     }
+    catch (const CompileError &e)
+    {
+        std::cerr << renderDiagnostic(e.diagnostic(), path, source);
+        return ExitCode::CompileTime;
+    }
+    catch (const RuntimeFault &e)
+    {
+        std::cerr << renderDiagnostic(e.diagnostic(), path, source);
+        return ExitCode::Runtime;
+    }
     catch (const std::exception &e)
     {
-        std::cout << "Error: " << e.what() << std::endl;
-        return 1;
+        // Nothing throws a positionless exception today. If something starts
+        // to, it is a fault in the engine, so it reads as one.
+        std::cerr << renderToolError(program, e.what());
+        return ExitCode::Runtime;
     }
 
-    return 0;
+    return ExitCode::Ok;
 }
