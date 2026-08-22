@@ -33,7 +33,9 @@ target_link_libraries(diagnostic_test PRIVATE algo_core)
 add_test(NAME diagnostic_test COMMAND diagnostic_test)
 
 # Golden-file cases: run tests/<name>.algo and compare stdout against
-# tests/<name>.expected.
+# tests/<name>.expected, plus stderr and the exit code where the case supplies
+# a .expected_err or .expected_code. run_case.cmake runs the interpreter from
+# tests/ with a bare filename, so a diagnostic's path is machine-independent.
 file(GLOB ALGO_TEST_CASES ${CMAKE_SOURCE_DIR}/tests/*.algo)
 foreach(algo_case ${ALGO_TEST_CASES})
     get_filename_component(case_name ${algo_case} NAME_WE)
@@ -41,8 +43,8 @@ foreach(algo_case ${ALGO_TEST_CASES})
         NAME ${case_name}
         COMMAND ${CMAKE_COMMAND}
                 -DALGO_BIN=$<TARGET_FILE:algo>
-                -DALGO_INPUT=${CMAKE_SOURCE_DIR}/tests/${case_name}.algo
-                -DALGO_EXPECTED=${CMAKE_SOURCE_DIR}/tests/${case_name}.expected
+                -DALGO_TESTS_DIR=${CMAKE_SOURCE_DIR}/tests
+                -DALGO_CASE=${case_name}
                 -P ${CMAKE_SOURCE_DIR}/tests/run_case.cmake
     )
 endforeach()
