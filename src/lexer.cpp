@@ -58,10 +58,17 @@ std::vector<Token> lex(const std::string &source)
                 word += source[i++];
                 col++;
             }
+            // The whole alphanumeric run is consumed before anything is
+            // compared, so a name that merely starts with a keyword — `trueValue`,
+            // `printer` — is one IDENTIFIER and not a keyword followed by a name.
             Span span{line, startCol, static_cast<int>(word.size())};
             if (word == "print")
             {
                 tokens.push_back({TokenType::PRINT, word, span});
+            }
+            else if (word == "true" || word == "false")
+            {
+                tokens.push_back({TokenType::BOOLEAN, word, span});
             }
             else
             {
@@ -70,32 +77,55 @@ std::vector<Token> lex(const std::string &source)
             continue;
         }
 
-        // Operators — all one character wide
-        Span span{line, col, 1};
+        // Operators. Each two-character form is tested before the
+        // one-character operator it starts with, so `==` never lexes as two
+        // `=`. The length is carried out of the switch rather than assumed,
+        // because it is both how far to advance and the span's `len` — and a
+        // two-character token recorded as one character wide would draw every
+        // caret under it a character short.
+        const char next = (i + 1 < source.size()) ? source[i + 1] : '\0';
+        TokenType type;
+        int length = 1;
+
         switch (c)
         {
         case '=':
-            tokens.push_back({TokenType::EQUALS, "=", span});
+            if (next == '=') { type = TokenType::EQUAL_EQUAL; length = 2; }
+            else             { type = TokenType::EQUALS; }
+            break;
+        case '!':
+            if (next == '=') { type = TokenType::NOT_EQUAL; length = 2; }
+            else             { type = TokenType::NOT; }
+            break;
+        case '<':
+            if (next == '=') { type = TokenType::LESS_EQUAL; length = 2; }
+            else             { type = TokenType::LESS; }
+            break;
+        case '>':
+            if (next == '=') { type = TokenType::GREATER_EQUAL; length = 2; }
+            else             { type = TokenType::GREATER; }
             break;
         case '+':
-            tokens.push_back({TokenType::PLUS, "+", span});
+            type = TokenType::PLUS;
             break;
         case '-':
-            tokens.push_back({TokenType::MINUS, "-", span});
+            type = TokenType::MINUS;
             break;
         case '*':
-            tokens.push_back({TokenType::MULTIPLY, "*", span});
+            type = TokenType::MULTIPLY;
             break;
         case '/':
-            tokens.push_back({TokenType::DIVIDE, "/", span});
+            type = TokenType::DIVIDE;
             break;
         default:
             throw CompileError(Diagnostic{
-                Severity::Error, span,
+                Severity::Error, Span{line, col, 1},
                 std::string("unknown character '") + c + "'"});
         }
-        i++;
-        col++;
+
+        tokens.push_back({type, source.substr(i, length), Span{line, col, length}});
+        i += length;
+        col += length;
     }
 
     // Zero-width token sitting just past the last character

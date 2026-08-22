@@ -32,6 +32,10 @@ add_executable(diagnostic_test tests/diagnostic_test.cpp)
 target_link_libraries(diagnostic_test PRIVATE algo_core)
 add_test(NAME diagnostic_test COMMAND diagnostic_test)
 
+add_executable(expression_test tests/expression_test.cpp)
+target_link_libraries(expression_test PRIVATE algo_core)
+add_test(NAME expression_test COMMAND expression_test)
+
 # Golden-file cases: run tests/<name>.algo and compare stdout against
 # tests/<name>.expected, plus stderr and the exit code where the case supplies
 # a .expected_err or .expected_code. run_case.cmake runs the interpreter from

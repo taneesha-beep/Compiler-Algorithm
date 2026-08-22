@@ -209,10 +209,15 @@ void everyErrorSiteCarriesARealSpan()
          "c.algo:1:1: error: expected a statement, found '='\n"
          "= 5\n"
          "^\n"},
+        // ON THE WORDING. Before item 1.1 this message named what could start
+        // an operand: "expected a number or a variable name". An expression can
+        // now also start with `true`, `false`, `-` or `!`, so that enumeration
+        // stopped being true and was replaced rather than extended — item 1.4
+        // adds a call, and a message listing every primary form ages badly.
         {"parser: operand missing at end of file",
          "x = 1 +",
          Thrown::Compile,
-         "c.algo:1:8: error: expected a number or a variable name, found end of file\n"
+         "c.algo:1:8: error: expected an expression, found end of file\n"
          "x = 1 +\n"
          "       ^\n"},
         {"resolver: use before assignment points at the use",
@@ -233,6 +238,54 @@ void everyErrorSiteCarriesARealSpan()
          "c.algo:1:5: error: integer literal out of range: 9999999999\n"
          "x = 9999999999\n"
          "    ^~~~~~~~~~\n"},
+        // The error sites item 1.1 adds. A type fault points at the whole
+        // operation, not at one operand: an operand only has the wrong type
+        // relative to what is being done with it.
+        // A two-character operator must span two characters. If `==` were
+        // lexed as one token of length 1, or as two `=` tokens, the caret under
+        // it here would be one character short and this text would not match.
+        {"a caret under '==' covers both characters",
+         "x == 5\n",
+         Thrown::Compile,
+         "c.algo:1:3: error: expected '=' after variable name\n"
+         "x == 5\n"
+         "  ^~\n"},
+        {"a caret under '<=' covers both characters",
+         "<= 5\n",
+         Thrown::Compile,
+         "c.algo:1:1: error: expected a statement, found '<='\n"
+         "<= 5\n"
+         "^~\n"},
+        {"arithmetic on a boolean covers the whole operation",
+         "x = true + 1\n",
+         Thrown::Runtime,
+         "c.algo:1:5: error: operator '+' cannot be applied to boolean and integer\n"
+         "x = true + 1\n"
+         "    ^~~~~~~~\n"},
+        {"ordering two booleans covers the whole comparison",
+         "x = true < false\n",
+         Thrown::Runtime,
+         "c.algo:1:5: error: operator '<' cannot be applied to boolean and boolean\n"
+         "x = true < false\n"
+         "    ^~~~~~~~~~~~\n"},
+        {"equality across the two types is a fault, not false",
+         "x = 1 == true\n",
+         Thrown::Runtime,
+         "c.algo:1:5: error: operator '==' cannot be applied to integer and boolean\n"
+         "x = 1 == true\n"
+         "    ^~~~~~~~~\n"},
+        {"negating a boolean covers the operator and its operand",
+         "x = -true\n",
+         Thrown::Runtime,
+         "c.algo:1:5: error: operator '-' cannot be applied to boolean\n"
+         "x = -true\n"
+         "    ^~~~~\n"},
+        {"negating an integer logically covers the operator and its operand",
+         "x = !1\n",
+         Thrown::Runtime,
+         "c.algo:1:5: error: operator '!' cannot be applied to integer\n"
+         "x = !1\n"
+         "    ^~\n"},
     };
 
     for (const Case &c : cases)
@@ -275,6 +328,19 @@ void theExitCodeClassificationIsPinned()
          "x 5\n", Thrown::Compile, ExitCode::CompileTime},
         {"use before assignment is a compile-time error",
          "y = zz\n", Thrown::Compile, ExitCode::CompileTime},
+        // A type fault is a *runtime* fault. The language has no type checker
+        // and the roadmap does not add one — item 1.3 is a resolver, which
+        // assigns frame slots and reports use-before-declaration, not types —
+        // so whether an operand has the right type depends on what the program
+        // computed. That is the definition of a runtime fault here, and it is
+        // the opposite classification from the out-of-range literal above,
+        // which is a property of the token's text alone.
+        {"a type mismatch is a runtime fault",
+         "x = true + 1\n", Thrown::Runtime, ExitCode::Runtime},
+        {"a mixed-type equality is a runtime fault",
+         "x = 1 != false\n", Thrown::Runtime, ExitCode::Runtime},
+        {"a unary operator on the wrong type is a runtime fault",
+         "x = !5\n", Thrown::Runtime, ExitCode::Runtime},
     };
 
     for (const Case &c : cases)

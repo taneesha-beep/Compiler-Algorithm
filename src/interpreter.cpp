@@ -5,7 +5,47 @@
 
 #include "diagnostic.h"
 
-int Interpreter::evaluate(Node node)
+namespace
+{
+
+// The caret goes on the whole operation rather than on one operand: an operand
+// only has the wrong type relative to what is being done with it.
+[[noreturn]] void binaryTypeFault(const Node &node, const Value &left,
+                                  const Value &right)
+{
+    throw RuntimeFault(Diagnostic{
+        Severity::Error, node->span,
+        "operator '" + node->value + "' cannot be applied to " +
+            typeName(left.type) + " and " + typeName(right.type)});
+}
+
+[[noreturn]] void unaryTypeFault(const Node &node, const Value &operand)
+{
+    throw RuntimeFault(Diagnostic{
+        Severity::Error, node->span,
+        "operator '" + node->value + "' cannot be applied to " +
+            typeName(operand.type)});
+}
+
+// Arithmetic and ordering are integer-only. See the type rules in value.h.
+void requireIntegers(const Node &node, const Value &left, const Value &right)
+{
+    if (!left.isInt() || !right.isInt())
+        binaryTypeFault(node, left, right);
+}
+
+// Equality is the one binary group that accepts booleans, and it accepts them
+// only against booleans: there is no conversion, so `1 == true` compares two
+// different types and is a fault rather than `false`.
+void requireSameType(const Node &node, const Value &left, const Value &right)
+{
+    if (left.type != right.type)
+        binaryTypeFault(node, left, right);
+}
+
+} // namespace
+
+Value Interpreter::evaluate(Node node)
 {
     if (node->type == NodeType::Number)
     {
@@ -19,7 +59,7 @@ int Interpreter::evaluate(Node node)
         // exit code is fixed now so that 3.2 changes only when the check runs.
         try
         {
-            return std::stoi(node->value);
+            return Value::fromInt(std::stoi(node->value));
         }
         catch (const std::out_of_range &)
         {
@@ -34,6 +74,14 @@ int Interpreter::evaluate(Node node)
                 "invalid integer literal: " + node->value});
         }
     }
+    if (node->type == NodeType::True)
+    {
+        return Value::fromBool(true);
+    }
+    if (node->type == NodeType::False)
+    {
+        return Value::fromBool(false);
+    }
     if (node->type == NodeType::Identifier)
     {
         // Unreachable while semanticCheck runs first, which is why this is a
@@ -47,22 +95,89 @@ int Interpreter::evaluate(Node node)
     }
     if (node->type == NodeType::BinOp)
     {
-        int left = evaluate(node->left);
-        int right = evaluate(node->right);
-        if (node->value == "+")
-            return left + right;
-        if (node->value == "-")
-            return left - right;
-        if (node->value == "*")
-            return left * right;
-        if (node->value == "/")
+        Value left = evaluate(node->left);
+        Value right = evaluate(node->right);
+
+        // ON THE STRING COMPARISONS. Dispatching an operator by comparing its
+        // text is one of the baseline's four unforced inefficiencies, and
+        // ablation C is what removes it. The comparison operators added by item
+        // 1.1 join the same chain on purpose: if they dispatched on an enum
+        // while `+` dispatched on a string, ablation C would be measuring half
+        // an operator set and its number would not mean what it says.
+        const std::string &op = node->value;
+
+        if (op == "+")
         {
+            requireIntegers(node, left, right);
+            return Value::fromInt(left.integer + right.integer);
+        }
+        if (op == "-")
+        {
+            requireIntegers(node, left, right);
+            return Value::fromInt(left.integer - right.integer);
+        }
+        if (op == "*")
+        {
+            requireIntegers(node, left, right);
+            return Value::fromInt(left.integer * right.integer);
+        }
+        if (op == "/")
+        {
+            requireIntegers(node, left, right);
             // The caret covers the whole division, not just the divisor: the
             // divisor is only zero in the context of what it divides.
-            if (right == 0)
+            if (right.integer == 0)
                 throw RuntimeFault(Diagnostic{Severity::Error, node->span,
                                               "division by zero"});
-            return left / right;
+            return Value::fromInt(left.integer / right.integer);
+        }
+        if (op == "<")
+        {
+            requireIntegers(node, left, right);
+            return Value::fromBool(left.integer < right.integer);
+        }
+        if (op == "<=")
+        {
+            requireIntegers(node, left, right);
+            return Value::fromBool(left.integer <= right.integer);
+        }
+        if (op == ">")
+        {
+            requireIntegers(node, left, right);
+            return Value::fromBool(left.integer > right.integer);
+        }
+        if (op == ">=")
+        {
+            requireIntegers(node, left, right);
+            return Value::fromBool(left.integer >= right.integer);
+        }
+        if (op == "==")
+        {
+            requireSameType(node, left, right);
+            return Value::fromBool(valuesEqual(left, right));
+        }
+        if (op == "!=")
+        {
+            requireSameType(node, left, right);
+            return Value::fromBool(!valuesEqual(left, right));
+        }
+    }
+    if (node->type == NodeType::UnaryOp)
+    {
+        Value operand = evaluate(node->left);
+        const std::string &op = node->value;
+
+        if (op == "-")
+        {
+            if (!operand.isInt())
+                unaryTypeFault(node, operand);
+            return Value::fromInt(-operand.integer);
+        }
+        if (op == "!")
+        {
+            if (!operand.isBool())
+                unaryTypeFault(node, operand);
+            return Value::fromBool(!operand.boolean);
         }
     }
     throw RuntimeFault(Diagnostic{Severity::Error, node->span,
@@ -79,7 +194,13 @@ void Interpreter::execute(const std::vector<Node> &statements)
         }
         else if (stmt->type == NodeType::Print)
         {
-            std::cout << evaluate(stmt->left) << std::endl;
+            // Written straight to the stream rather than through a
+            // value-to-string helper, so that printing allocates nothing.
+            Value value = evaluate(stmt->left);
+            if (value.isBool())
+                std::cout << (value.boolean ? "true" : "false") << std::endl;
+            else
+                std::cout << value.integer << std::endl;
         }
     }
 }

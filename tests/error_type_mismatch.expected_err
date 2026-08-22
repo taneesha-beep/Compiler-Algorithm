@@ -1,0 +1,3 @@
+error_type_mismatch.algo:1:7: error: operator '+' cannot be applied to boolean and integer
+print true + 1
+      ^~~~~~~~

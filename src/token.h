@@ -6,11 +6,25 @@
 // STAGE 1: LEXER — token definitions
 // ============================================================
 
+// A token type is spelled out rather than named after its glyph (MULTIPLY, not
+// STAR), which is the convention this enum started with.
+//
+// `true` and `false` share one type, BOOLEAN, carrying its text in `value` —
+// the same shape as NUMBER, the language's other literal. A keyword that is a
+// literal is a literal first.
 enum class TokenType
 {
     NUMBER,
+    BOOLEAN,
     IDENTIFIER,
     EQUALS,
+    EQUAL_EQUAL,
+    NOT_EQUAL,
+    LESS,
+    LESS_EQUAL,
+    GREATER,
+    GREATER_EQUAL,
+    NOT,
     PLUS,
     MINUS,
     MULTIPLY,
