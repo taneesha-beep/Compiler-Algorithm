@@ -122,6 +122,29 @@ void collect(const Node &node, std::vector<Reference> &out)
         collect(loop->body, out);
         return;
     }
+    if (const CallNode *call = tryAs<CallNode>(node))
+    {
+        // The callee is a function name and not a variable, so it carries no
+        // slot and is not a reference. The arguments are expressions in the
+        // frame the call stands in, and are.
+        for (const Node &argument : call->arguments)
+            collect(argument, out);
+        return;
+    }
+    if (const ReturnNode *returned = tryAs<ReturnNode>(node))
+    {
+        collect(returned->value, out); // null for the bare form
+        return;
+    }
+    if (tryAs<FunctionNode>(node))
+    {
+        // Deliberately not descended into. A slot is an index within a frame,
+        // and a function body is a frame of its own numbered from zero, so
+        // mixing its slots into the caller's list would compare two different
+        // numbering schemes as if they were one. `referencesInFrameOf` below
+        // walks a function's own frame.
+        return;
+    }
     // A number or a boolean literal names nothing and has no children.
 }
 
@@ -131,6 +154,27 @@ std::vector<Reference> referencesIn(const std::vector<Node> &statements)
     for (const Node &statement : statements)
         collect(statement, references);
     return references;
+}
+
+// Everything numbered into one function's frame: its parameters, which are
+// declarations rather than nodes, and then every variable its body mentions.
+std::vector<Reference> referencesInFrameOf(const FunctionNode &function)
+{
+    std::vector<Reference> references;
+    for (const Parameter &parameter : function.parameters)
+        references.push_back(Reference{parameter.name, parameter.slot, true});
+    collect(function.body, references);
+    return references;
+}
+
+// The functions a program declares, in source order.
+std::vector<const FunctionNode *> functionsIn(const std::vector<Node> &statements)
+{
+    std::vector<const FunctionNode *> functions;
+    for (const Node &statement : statements)
+        if (const FunctionNode *function = tryAs<FunctionNode>(statement))
+            functions.push_back(function);
+    return functions;
 }
 
 // ============================================================
@@ -402,6 +446,135 @@ void aNameDeclaredAgainAfterItsBlockIsANewVariable()
 }
 
 // ============================================================
+// Frames: what item 1.4 made a stack of
+// ============================================================
+
+// Two functions and a top-level statement list. Each of the three is a frame,
+// so each numbers its own slots from zero and no index means anything outside
+// the frame that issued it.
+const char *kThreeFrames =
+    "fn scale(factor, value) {\n"   // slots 0 and 1 of scale's frame
+    "    scaled = factor * value\n" // slot 2
+    "    return scaled\n"
+    "}\n"
+    "fn count(limit) {\n"           // slot 0 of count's frame
+    "    i = 0\n"                   // slot 1
+    "    while i < limit {\n"
+    "        i = i + 1\n"
+    "    }\n"
+    "    return i\n"
+    "}\n"
+    "base = 2\n"                    // slot 0 of the program's frame
+    "print scale(base, 3)\n"
+    "print count(base)\n";
+
+void aFunctionBodyIsAFrameOfItsOwn()
+{
+    int frameSize = 0;
+    std::vector<Node> ast = parseAndResolve(kThreeFrames, frameSize);
+    if (ast.empty())
+        return;
+
+    check(frameSize == 1,
+          "the program's own frame holds only the program's own variables");
+
+    const std::vector<const FunctionNode *> functions = functionsIn(ast);
+    check(functions.size() == 2, "both functions are found");
+    if (functions.size() != 2)
+        return;
+
+    check(functions[0]->frameSize == 3,
+          "two parameters and one local make a frame of three");
+    check(functions[1]->frameSize == 2,
+          "one parameter and one local make a frame of two");
+
+    // The point of a frame: both functions and the program number from zero,
+    // so slot 0 exists three times over and means something different each
+    // time. Item 3.4 gives each frame its own vector, and this is why.
+    for (const FunctionNode *function : functions)
+    {
+        std::set<int> slots;
+        bool allInRange = true;
+        for (const Reference &reference : referencesInFrameOf(*function))
+        {
+            slots.insert(reference.slot);
+            if (reference.slot < 0 || reference.slot >= function->frameSize)
+                allInRange = false;
+        }
+        check(allInRange, std::string("every slot in '") + function->name +
+                              "' indexes that function's own frame");
+        check(slots.find(0) != slots.end(),
+              std::string("'") + function->name + "' numbers from zero");
+    }
+
+    // And the program's own frame is not widened by anything a function
+    // declared: `scaled`, `i` and both parameter lists are numbered elsewhere.
+    for (const Reference &reference : referencesIn(ast))
+        check(reference.slot == 0,
+              "the only variable in the program's frame is its own");
+}
+
+void parametersAreDeclaredAndCarrySlots()
+{
+    const std::string source =
+        "fn f(a, b, c) {\n"
+        "    return a + b + c\n"
+        "}\n"
+        "print f(1, 2, 3)\n";
+
+    int frameSize = 0;
+    std::vector<Node> ast = parseAndResolve(source, frameSize);
+    if (ast.empty())
+        return;
+
+    const std::vector<const FunctionNode *> functions = functionsIn(ast);
+    if (functions.size() != 1)
+    {
+        check(false, "the function is found");
+        return;
+    }
+    const FunctionNode &f = *functions[0];
+
+    check(f.parameters.size() == 3, "all three parameters are recorded");
+    check(f.frameSize == 3, "three parameters and no locals make a frame of three");
+
+    bool numberedInOrder = true;
+    for (std::size_t i = 0; i < f.parameters.size(); i++)
+        numberedInOrder =
+            numberedInOrder && f.parameters[i].slot == static_cast<int>(i);
+    check(numberedInOrder,
+          "parameters take the first slots of the frame, in the order written");
+
+    // The body's mentions have to agree with the parameter list, or an
+    // argument would be bound into one slot and read out of another.
+    std::vector<Reference> body;
+    collect(f.body, body);
+    check(body.size() == 3, "all three parameter reads are found in the body");
+    bool agrees = true;
+    for (const Reference &reference : body)
+        for (const Parameter &parameter : f.parameters)
+            if (reference.name == parameter.name && reference.slot != parameter.slot)
+                agrees = false;
+    check(agrees, "a parameter is read from the slot it was bound into");
+}
+
+// A parameter is the first construct in this language that is a declaration
+// and nothing else, so it is the first that can be duplicated. Item 1.3
+// recorded duplicate declaration as inexpressible, which was true of a
+// language where assignment was the only way to introduce a name.
+void aParameterIsADeclarationAndCanBeDuplicated()
+{
+    Diagnostic diag;
+    check(resolveAndCatch("fn f(a, a) {\n    return a\n}\nprint f(1, 2)\n",
+                          diag) == Thrown::Compile,
+          "a duplicate parameter is rejected");
+    check(resolveAndCatch("fn f(a) {\n    a = a + 1\n    return a\n}\n"
+                          "print f(1)\n",
+                          diag) == Thrown::Nothing,
+          "but assigning to a parameter is not a redeclaration of it");
+}
+
+// ============================================================
 // The errors the pass reports
 // ============================================================
 
@@ -471,6 +644,102 @@ void resolutionErrorsAreCompileErrorsWithSpans()
     }
 }
 
+// The errors item 1.4 adds: everything about a call, a declaration, and the
+// frame boundary. Item 1.3 deferred arity here because there was nothing to
+// call; this is where that debt comes due.
+void callAndFunctionErrorsAreCompileErrorsWithSpans()
+{
+    struct Case
+    {
+        const char *what;
+        const char *source;
+        const char *rendered;
+    };
+
+    const std::vector<Case> cases = {
+        {"too many arguments",
+         "fn add(a, b) {\n    return a + b\n}\nprint add(1, 2, 3)\n",
+         "r.algo:4:7: error: function 'add' expects 2 arguments, but 3 were given\n"
+         "print add(1, 2, 3)\n"
+         "      ^~~~~~~~~~~~\n"},
+        // The singular, which is the half of a count message that is usually
+        // wrong. Both halves of it decline: one parameter, one argument.
+        {"too few arguments, and both counts in the singular",
+         "fn one(a) {\n    return a\n}\nprint one()\n",
+         "r.algo:4:7: error: function 'one' expects 1 argument, but 0 were given\n"
+         "print one()\n"
+         "      ^~~~~\n"},
+        {"one argument given where two are wanted",
+         "fn add(a, b) {\n    return a + b\n}\nprint add(1)\n",
+         "r.algo:4:7: error: function 'add' expects 2 arguments, but 1 was given\n"
+         "print add(1)\n"
+         "      ^~~~~~\n"},
+        {"a call of a function that was never declared",
+         "print nope(1)\n",
+         "r.algo:1:7: error: unknown function 'nope'\n"
+         "print nope(1)\n"
+         "      ^~~~~~~\n"},
+        // The two halves of "functions are not values", worded as a pair
+        // because each says which of the two namespaces the name is in.
+        {"a function name used as a value",
+         "fn f() {\n    return 1\n}\nprint f\n",
+         "r.algo:4:7: error: 'f' is a function, not a value\n"
+         "print f\n"
+         "      ^\n"},
+        {"a variable name used as a function",
+         "x = 1\nprint x(2)\n",
+         "r.algo:2:7: error: 'x' is a variable, not a function\n"
+         "print x(2)\n"
+         "      ^~~~\n"},
+        {"a return with a value outside any function",
+         "return 1\n",
+         "r.algo:1:1: error: 'return' outside of a function\n"
+         "return 1\n"
+         "^~~~~~~~\n"},
+        {"a bare return outside any function",
+         "return\n",
+         "r.algo:1:1: error: 'return' outside of a function\n"
+         "return\n"
+         "^~~~~~\n"},
+        {"two functions of one name",
+         "fn f() {\n    return 1\n}\nfn f() {\n    return 2\n}\nprint f()\n",
+         "r.algo:4:4: error: duplicate function 'f'\n"
+         "fn f() {\n"
+         "   ^\n"},
+        {"a parameter written twice",
+         "fn f(a, a) {\n    return a\n}\nprint f(1, 2)\n",
+         "r.algo:1:9: error: duplicate parameter 'a'\n"
+         "fn f(a, a) {\n"
+         "        ^\n"},
+        // The frame boundary, and the reason it gets a message of its own: the
+        // assignment is right there at the top of the file, so reporting this
+        // as "used before assignment" would send the reader looking for
+        // something already written.
+        {"a top-level variable read inside a function",
+         "total = 5\nfn f() {\n    return total\n}\nprint f()\n",
+         "r.algo:3:12: error: variable 'total' used inside a function, where only "
+         "parameters and locals are in scope\n"
+         "    return total\n"
+         "           ^~~~~\n"},
+        {"a function's parameter read from another function",
+         "fn a(n) {\n    return n\n}\nfn b() {\n    return n\n}\nprint b()\n",
+         "r.algo:5:12: error: variable 'n' used before assignment\n"
+         "    return n\n"
+         "           ^\n"},
+    };
+
+    for (const Case &c : cases)
+    {
+        Diagnostic diag;
+        const Thrown thrown = resolveAndCatch(c.source, diag);
+        check(thrown == Thrown::Compile,
+              std::string("the resolver rejects it at compile time: ") + c.what);
+        if (thrown != Thrown::Compile)
+            continue;
+        checkText(c.what, renderDiagnostic(diag, "r.algo", c.source), c.rendered);
+    }
+}
+
 // The counterpart: programs whose names are all in scope must not be rejected.
 // A resolver that popped one scope too many, or that failed to search outward,
 // would still pass every check above.
@@ -487,6 +756,30 @@ void programsWhoseNamesAreInScopeAreAccepted()
         "x = 0\nwhile x < 3 { x = x + 1 }\nprint x\n",
         "x = 1\nif x > 0 { print x } else { print x }\n",
         "x = 1\nif x > 0 { y = 2  print y }\n",
+        // Item 1.4's own. Recursion needs a function to be visible inside its
+        // own body; the forward reference and the mutual pair need every
+        // function collected before any body is walked.
+        "fn f(n) {\n  if n < 2 { return n }\n  return f(n - 1) + f(n - 2)\n}\n"
+        "print f(5)\n",
+        "fn a() {\n  return b()\n}\nfn b() {\n  return 1\n}\nprint a()\n",
+        "fn even(n) {\n  if n == 0 { return true }\n  return odd(n - 1)\n}\n"
+        "fn odd(n) {\n  if n == 0 { return false }\n  return even(n - 1)\n}\n"
+        "print even(4)\n",
+        "fn nothing() {\n  return\n}\nprint nothing()\n",
+        "fn nothing() {\n}\nprint nothing()\n",
+        // Two namespaces: the parameter and the function are both called `f`,
+        // and inside the body `f` is the parameter while `f(…)` is the call.
+        "fn f(f) {\n  return f + 1\n}\nprint f(1)\n",
+        // A function's local and a top-level variable of one name are two
+        // variables in two frames, and neither can see the other.
+        "total = 1\nfn g() {\n  total = 2\n  return total\n}\nprint g()\n",
+        // A block inside a function body scopes within that function's frame,
+        // the same way a block at the top level scopes within the program's.
+        "fn h(n) {\n  { inner = n * 2\n    return inner }\n}\nprint h(3)\n",
+        // A call is an expression, so it may stand anywhere one may.
+        "fn one() {\n  return 1\n}\nprint one() + one() * one()\n"
+        "print -one()\nprint one() == 1\nx = one()\n"
+        "if one() < 2 { print one() }\nwhile one() > 1 { print 0 }\n",
     };
 
     for (const char *source : accepted)
@@ -506,7 +799,11 @@ int main()
     aLoopBodyAssignsTheVariablesItSees();
     aClosedScopeDoesNotHandItsSlotsBack();
     aNameDeclaredAgainAfterItsBlockIsANewVariable();
+    aFunctionBodyIsAFrameOfItsOwn();
+    parametersAreDeclaredAndCarrySlots();
+    aParameterIsADeclarationAndCanBeDuplicated();
     resolutionErrorsAreCompileErrorsWithSpans();
+    callAndFunctionErrorsAreCompileErrorsWithSpans();
     programsWhoseNamesAreInScopeAreAccepted();
 
     if (failures != 0)

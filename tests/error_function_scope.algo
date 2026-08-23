@@ -1,0 +1,7 @@
+total = 5
+
+fn addToTotal(n) {
+    return total + n
+}
+
+print addToTotal(1)

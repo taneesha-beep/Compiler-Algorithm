@@ -12,6 +12,11 @@
 // `true` and `false` share one type, BOOLEAN, carrying its text in `value` —
 // the same shape as NUMBER, the language's other literal. A keyword that is a
 // literal is a literal first.
+//
+// ON THE PARENTHESES, added by item 1.4. They are not grouping parentheses and
+// the language still has none: `(1 + 2) * 3` does not parse. A LEFT_PAREN is
+// only ever the one that opens a call's argument list or a function's
+// parameter list, and in both it follows a name. See the note in `parser.h`.
 enum class TokenType
 {
     NUMBER,
@@ -31,10 +36,15 @@ enum class TokenType
     DIVIDE,
     LEFT_BRACE,
     RIGHT_BRACE,
+    LEFT_PAREN,
+    RIGHT_PAREN,
+    COMMA,
     PRINT,
     IF,
     ELSE,
     WHILE,
+    FN,
+    RETURN,
     END_OF_FILE
 };
 

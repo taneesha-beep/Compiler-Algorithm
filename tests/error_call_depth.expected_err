@@ -1,0 +1,3 @@
+error_call_depth.algo:5:12: error: call depth exceeded
+    return down(n - 1)
+           ^~~~~~~~~~~

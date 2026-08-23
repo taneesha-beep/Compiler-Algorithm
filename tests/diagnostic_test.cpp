@@ -339,6 +339,66 @@ void everyErrorSiteCarriesARealSpan()
          "c.algo:2:1: error: expected '}' to close this block\n"
          "\n"
          "^\n"},
+        // The error sites item 1.4 adds. The resolver's own — arity, an
+        // unknown function, the frame boundary — are in
+        // `tests/resolver_test.cpp` beside the rest of that pass; what is here
+        // is the parser's, and the one new runtime fault.
+        {"a function needs a name",
+         "fn 5() {\n}\n",
+         Thrown::Compile,
+         "c.algo:1:4: error: expected a function name after 'fn'\n"
+         "fn 5() {\n"
+         "   ^\n"},
+        {"a function needs a parameter list, even an empty one",
+         "fn f {\n}\n",
+         Thrown::Compile,
+         "c.algo:1:6: error: expected '(' after the function name\n"
+         "fn f {\n"
+         "     ^\n"},
+        {"an unclosed parameter list reports the paren that is missing",
+         "fn f(a {\n}\n",
+         Thrown::Compile,
+         "c.algo:1:8: error: expected ')' to close the parameter list\n"
+         "fn f(a {\n"
+         "       ^\n"},
+        {"a parameter list holds names, not punctuation",
+         "fn f(,) {\n}\n",
+         Thrown::Compile,
+         "c.algo:1:6: error: expected a parameter name\n"
+         "fn f(,) {\n"
+         "     ^\n"},
+        // Functions are top-level only, so this is reported where the `fn`
+        // stands rather than as a statement that cannot begin with one.
+        {"a function inside a block says where a function may go",
+         "if true {\n    fn f() {\n    }\n}\n",
+         Thrown::Compile,
+         "c.algo:2:5: error: a function may only be declared at the top level\n"
+         "    fn f() {\n"
+         "    ^~\n"},
+        {"an unclosed argument list reports the paren that is missing",
+         "fn f(a) {\n}\nx = f(1\nprint 2\n",
+         Thrown::Compile,
+         "c.algo:4:1: error: expected ')' to close the argument list\n"
+         "print 2\n"
+         "^~~~~\n"},
+        // The `(` of a call and of a parameter list is the only `(` this
+        // language has. It never groups, so one standing where an expression
+        // should start is not a grouped sub-expression, and the message that
+        // was already there says so without having to know about calls.
+        {"a parenthesis cannot group an expression",
+         "x = (1 + 2) * 3\n",
+         Thrown::Compile,
+         "c.algo:1:5: error: expected an expression, found '('\n"
+         "x = (1 + 2) * 3\n"
+         "    ^\n"},
+        // The one runtime fault item 1.4 adds. The caret goes on the call that
+        // could not be entered, which is the innermost one.
+        {"an exhausted call depth points at the call that overran it",
+         "fn down(n) {\n    return down(n - 1)\n}\nx = down(1)\n",
+         Thrown::Runtime,
+         "c.algo:2:12: error: call depth exceeded\n"
+         "    return down(n - 1)\n"
+         "           ^~~~~~~~~~~\n"},
     };
 
     for (const Case &c : cases)
@@ -394,6 +454,22 @@ void theExitCodeClassificationIsPinned()
          "x = 1 != false\n", Thrown::Runtime, ExitCode::Runtime},
         {"a unary operator on the wrong type is a runtime fault",
          "x = !5\n", Thrown::Runtime, ExitCode::Runtime},
+        // Item 1.4's two, and they fall on opposite sides for the same reason
+        // the literal and the type mismatch do. An argument count is a
+        // property of the source text alone — the call site says how many, the
+        // declaration says how many — so it is settled before the program runs
+        // and is a compile-time error. How deep a chain of calls gets depends
+        // on what the program computed, so it is a runtime fault.
+        {"a wrong-arity call is a compile-time error",
+         "fn f(a) {\n    return a\n}\nx = f(1, 2)\n",
+         Thrown::Compile, ExitCode::CompileTime},
+        {"an exhausted call depth is a runtime fault",
+         "fn down(n) {\n    return down(n - 1)\n}\nx = down(1)\n",
+         Thrown::Runtime, ExitCode::Runtime},
+        {"a call of a function that does not exist is a compile-time error",
+         "x = nope()\n", Thrown::Compile, ExitCode::CompileTime},
+        {"'return' outside a function is a compile-time error",
+         "return 1\n", Thrown::Compile, ExitCode::CompileTime},
     };
 
     for (const Case &c : cases)

@@ -48,7 +48,7 @@ std::vector<Token> lex(const std::string &source)
             continue;
         }
 
-        // Identifiers and keywords (print)
+        // Identifiers and keywords (print, if, else, while, fn, return)
         if (std::isalpha(static_cast<unsigned char>(c)))
         {
             int startCol = col;
@@ -77,6 +77,14 @@ std::vector<Token> lex(const std::string &source)
             else if (word == "while")
             {
                 tokens.push_back({TokenType::WHILE, word, span});
+            }
+            else if (word == "fn")
+            {
+                tokens.push_back({TokenType::FN, word, span});
+            }
+            else if (word == "return")
+            {
+                tokens.push_back({TokenType::RETURN, word, span});
             }
             else if (word == "true" || word == "false")
             {
@@ -134,6 +142,15 @@ std::vector<Token> lex(const std::string &source)
             break;
         case '}':
             type = TokenType::RIGHT_BRACE;
+            break;
+        case '(':
+            type = TokenType::LEFT_PAREN;
+            break;
+        case ')':
+            type = TokenType::RIGHT_PAREN;
+            break;
+        case ',':
+            type = TokenType::COMMA;
             break;
         default:
             throw CompileError(Diagnostic{

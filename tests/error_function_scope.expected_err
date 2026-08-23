@@ -1,0 +1,3 @@
+error_function_scope.algo:4:12: error: variable 'total' used inside a function, where only parameters and locals are in scope
+    return total + n
+           ^~~~~

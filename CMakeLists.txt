@@ -62,7 +62,17 @@ foreach(algo_case ${ALGO_TEST_CASES})
     # bug it is. The guard belongs here rather than in the interpreter: an
     # iteration cap would be a branch inside the hot path of every benchmark
     # Phase 3 measures, and a language semantic the roadmap does not list.
-    # Every case currently runs in about ten milliseconds, so ten seconds is
-    # three orders of magnitude of headroom and can only fire on a real hang.
+    # Almost every case runs in about ten milliseconds, so ten seconds is three
+    # orders of magnitude of headroom and can only fire on a real hang.
     set_tests_properties(${case_name} PROPERTIES TIMEOUT 10)
 endforeach()
+
+# The one case that is a workload rather than a check. `fib` is Phase 1's own
+# acceptance criterion — `fib(27)` under the tree-walk interpreter — so it does
+# real work and takes on the order of a second here rather than ten
+# milliseconds, and it is the program Phase 3 will spend its ablation series
+# measuring. The longer limit is still only a hang guard: it is not an
+# assertion about how long the case should take, and no number in it is a
+# measurement. A run that hits sixty seconds has stopped working, not slowed
+# down.
+set_tests_properties(fib PROPERTIES TIMEOUT 60)

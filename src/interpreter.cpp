@@ -116,11 +116,18 @@ Value Interpreter::evaluate(Node node)
         // 3.4 measures, so deleting it here would quietly perform half of that
         // ablation. And a fault beats undefined behaviour if a later item ever
         // widens what the resolver admits.
-        if (variables.find(identifier->name) == variables.end())
+        //
+        // Item 1.4 narrowed what has to be argued rather than widening it. A
+        // name inside a function body resolves against that function's frame
+        // and no other — the resolver's lookup stops at the frame boundary —
+        // so the environment this searches is the one the resolver decided the
+        // name belonged to, and the argument above applies within it unchanged.
+        Environment &environment = frames.back();
+        if (environment.find(identifier->name) == environment.end())
             throw RuntimeFault(Diagnostic{
                 Severity::Error, identifier->span,
                 "undefined variable '" + identifier->name + "'"});
-        return variables[identifier->name];
+        return environment[identifier->name];
     }
     if (const BinOpNode *binary = tryAs<BinOpNode>(node))
     {
@@ -209,31 +216,132 @@ Value Interpreter::evaluate(Node node)
             return Value::fromBool(!operand.boolean);
         }
     }
+    if (const CallNode *call = tryAs<CallNode>(node))
+    {
+        return callFunction(*call);
+    }
     throw RuntimeFault(Diagnostic{Severity::Error, node->span,
                                   "unknown node type"});
 }
 
-// ON THE ABSENT SCOPE. A block groups statements and nothing more: it does not
-// push an environment here, and this map is still one flat map keyed on the
-// variable's name. Scope is not missing from the language — item 1.3 put it in
-// the resolver, which carries the scope stack, decides which variable each name
-// refers to, and rejects a name used outside the block that assigns it. What is
-// deliberately missing is scope *at run time*: by the time a program reaches
-// this file, every name it can still mention refers to exactly one variable,
-// so a flat map answers every lookup the same way a stack of them would.
+// A call: evaluate the arguments where they are written, then run the body in
+// an environment of its own.
 //
-// It answers them by comparing strings down an ordered map, which is the point.
-// Ablation D measures replacing this environment with the frame slots the
-// resolver has already written onto the nodes. Turning it into a stack of
-// ordered maps now, or into a vector indexed by slot now, would each leave
-// ablation D measuring something the roadmap never described — and the second
-// of those *is* ablation D, performed with nothing recording what it bought.
-void Interpreter::executeStatement(const Node &statement)
+// The arguments are evaluated *before* the new frame is pushed, because they
+// are expressions in the caller's scope — `fib(n - 1)` reads the caller's `n`,
+// and reading it after the callee's frame was in place would find the callee's
+// or nothing at all. They are collected into a vector rather than bound one at
+// a time for the same reason: binding the first would already have had to push
+// the frame the second is not allowed to see.
+Value Interpreter::callFunction(const CallNode &call)
+{
+    // ON WHY THIS CANNOT FIRE, which is the same argument the undefined
+    // variable above rests on. The resolver collects every function before it
+    // walks anything and rejects a call it cannot find, so a program that got
+    // this far names a function that is in this map. The lookup stays because a
+    // fault beats undefined behaviour if a later item widens what the resolver
+    // admits, and because removing it would be an optimisation of a path no
+    // ablation names.
+    auto found = functions.find(call.callee);
+    if (found == functions.end())
+        throw RuntimeFault(Diagnostic{Severity::Error, call.span,
+                                      "unknown function '" + call.callee + "'"});
+    const FunctionNode &function = *found->second;
+
+    std::vector<Value> arguments;
+    arguments.reserve(call.arguments.size());
+    for (const Node &argument : call.arguments)
+        arguments.push_back(evaluate(argument));
+
+    // The depth is the height of the frame stack, so there is no counter to
+    // keep in step with it. `frames.size()` is 1 at the top level, so refusing
+    // at `> maxCallDepth` admits exactly maxCallDepth nested calls. The caret
+    // goes on the call that could not be entered.
+    if (frames.size() > static_cast<std::size_t>(maxCallDepth))
+        throw RuntimeFault(
+            Diagnostic{Severity::Error, call.span, "call depth exceeded"});
+
+    // Popped on the way out however this returns, including on the unwinding
+    // of a fault raised inside the body: an interpreter that faulted with
+    // frames still stacked would report the wrong depth to anything that ran
+    // after it.
+    struct FramePopper
+    {
+        std::vector<Environment> &frames;
+        ~FramePopper() { frames.pop_back(); }
+    };
+
+    frames.emplace_back();
+    FramePopper popper{frames};
+
+    // The resolver has already checked that these two counts agree.
+    for (std::size_t i = 0; i < arguments.size(); i++)
+        frames.back()[function.parameters[i].name] = arguments[i];
+
+    // ON WHAT A FUNCTION WITHOUT A RETURN HANDS BACK: the integer 0, both for
+    // the bare `return` and for a body that runs off its end.
+    //
+    // The language has exactly two value types and the roadmap adds no third,
+    // so there is no unit or nil to hand back — inventing one would be a
+    // language feature no item lists, and it would put a third case into the
+    // value type that item 1.5 widens and Phase 4 pushes on a stack. The other
+    // candidate, faulting when a call that produced no value is used, was
+    // rejected because every call in this language is in an expression
+    // position: there are no expression statements, so a function that
+    // returned nothing could not be called at all, and the bare `return` item
+    // 1.4 requires would be unusable. Zero makes it an early exit, which is
+    // what it is for.
+    if (executeStatement(function.body) == Flow::Return)
+        return returnValue;
+    return Value::fromInt(0);
+}
+
+// ON RUN-TIME SCOPE. A block still groups statements and nothing more: it does
+// not push an environment, and scope inside a frame is entirely the resolver's
+// business — by the time a program reaches this file, every name it can still
+// mention refers to exactly one variable of its frame, so a flat map answers
+// every lookup within that frame the way a stack of them would.
+//
+// What item 1.4 changed is the *frame*, not the scope. Recursion makes one
+// environment for the whole program wrong rather than merely slow: `fib(n)`
+// calling `fib(n - 1)` needs two live `n`s, and one map has room for one. So
+// there is a map per call, on a stack. It is still an ordered map keyed on
+// `std::string`, which is the point — see the note on the environment in
+// `interpreter.h` for why ablation D needs it to stay one.
+//
+// ON HOW `return` UNWINDS. It is a flag returned up the statement walk: every
+// statement says whether it ran or returned, and a block, an `if` and a
+// `while` stop as soon as one of them says it returned. The value travels in
+// the `returnValue` member beside it.
+//
+// The two alternatives were rejected on cost, and the cost is what decides it
+// here rather than taste. A **C++ exception** per return is the tidiest to
+// write — `throw Return{value}` needs no propagation at all — and it is the
+// one choice that would wreck Phase 3: `fib(27)` returns several hundred
+// thousand times, and a thrown-and-caught exception costs on the order of a
+// microsecond, so the mechanism would cost more than everything the five
+// ablations remove put together, and no ablation would account for it. A
+// **sentinel value** — a distinguished Value meaning "this was a return" —
+// needs a third case in a two-case value type, which is a language change
+// nothing asked for and which item 1.5 and Phase 4 would both have to carry.
+//
+// What the flag costs is one comparison per *statement executed inside a
+// function*, not per node evaluated: an expression pays nothing, and the
+// statement walk is the smaller of the two by a wide margin. In `fib` that is
+// a handful of predictable branches per call, against a map construction and a
+// parameter binding on the same path.
+Flow Interpreter::executeStatement(const Node &statement)
 {
     if (const AssignNode *assign = tryAs<AssignNode>(statement))
     {
-        variables[assign->name] = evaluate(assign->value);
-        return;
+        // The value first and the binding second, written as two statements so
+        // that neither the order nor the frame the write lands in depends on
+        // how the compiler sequences one expression: evaluating the value may
+        // enter and leave any number of calls, and the frame it is stored into
+        // is the one standing after all of them.
+        Value value = evaluate(assign->value);
+        frames.back()[assign->name] = value;
+        return Flow::Normal;
     }
     if (const PrintNode *print = tryAs<PrintNode>(statement))
     {
@@ -244,23 +352,24 @@ void Interpreter::executeStatement(const Node &statement)
             std::cout << (value.boolean ? "true" : "false") << std::endl;
         else
             std::cout << value.integer << std::endl;
-        return;
+        return Flow::Normal;
     }
     if (const BlockNode *block = tryAs<BlockNode>(statement))
     {
         for (const Node &inner : block->statements)
-            executeStatement(inner);
-        return;
+            if (executeStatement(inner) == Flow::Return)
+                return Flow::Return;
+        return Flow::Normal;
     }
     if (const IfNode *conditional = tryAs<IfNode>(statement))
     {
         Value condition = evaluate(conditional->condition);
         requireCondition(conditional->condition, condition);
         if (condition.boolean)
-            executeStatement(conditional->thenBranch);
-        else if (conditional->elseBranch)
-            executeStatement(conditional->elseBranch);
-        return;
+            return executeStatement(conditional->thenBranch);
+        if (conditional->elseBranch)
+            return executeStatement(conditional->elseBranch);
+        return Flow::Normal;
     }
     if (const WhileNode *loop = tryAs<WhileNode>(statement))
     {
@@ -270,15 +379,26 @@ void Interpreter::executeStatement(const Node &statement)
         // and it would be a language semantic the roadmap does not list. The
         // guard against a runaway program belongs to whatever runs it — the
         // test suite sets a CTest timeout, which is where it costs nothing.
+        // Item 1.4's call-depth limit is not a counter-example; see the note on
+        // it in `interpreter.h`.
         while (true)
         {
             Value condition = evaluate(loop->condition);
             requireCondition(loop->condition, condition);
             if (!condition.boolean)
                 break;
-            executeStatement(loop->body);
+            if (executeStatement(loop->body) == Flow::Return)
+                return Flow::Return;
         }
-        return;
+        return Flow::Normal;
+    }
+    if (const ReturnNode *returned = tryAs<ReturnNode>(statement))
+    {
+        // A bare `return` carries no expression and yields 0 — see the note in
+        // `callFunction` on why 0 and not a unit value or a fault.
+        returnValue = returned->value ? evaluate(returned->value)
+                                      : Value::fromInt(0);
+        return Flow::Return;
     }
 
     throw RuntimeFault(Diagnostic{Severity::Error, statement->span,
@@ -286,7 +406,15 @@ void Interpreter::executeStatement(const Node &statement)
 }
 
 // The program itself is a statement list rather than a block: it is not
-// delimited by braces and introduces no scope of its own.
+// delimited by braces and introduces no scope of its own. It does have a frame
+// — the one the resolver numbered its top-level variables into — which is why
+// one is pushed here before anything runs.
+//
+// Functions are collected before any statement executes, so a call may name a
+// function declared further down the file, and a function may call itself. The
+// resolver settled the same question the same way in its own first pass; the
+// two agree because both are answering "what functions does this program have",
+// which is a property of the whole file and not of a position in it.
 //
 // `executeStatement` takes its Node by reference, unlike `evaluate`. The
 // by-value pass in `evaluate` is ablation A's subject and has to stay; adding a
@@ -294,6 +422,23 @@ void Interpreter::executeStatement(const Node &statement)
 // measurement that item 3.1 was never going to remove, and inflate it.
 void Interpreter::execute(const std::vector<Node> &statements)
 {
+    // Reserved once so that pushing a frame can never move the frames already
+    // on the stack. Nothing here holds a reference across a call, but a
+    // reallocation in the middle of one is the kind of bug that would appear
+    // only at a particular depth, and the bound is known: the call-depth limit
+    // is what makes it known.
+    frames.reserve(static_cast<std::size_t>(maxCallDepth) + 1);
+    frames.emplace_back();
+
     for (const Node &statement : statements)
-        executeStatement(statement);
+        if (const FunctionNode *function = tryAs<FunctionNode>(statement))
+            functions.emplace(function->name, function);
+
+    // A function declaration is not something to execute, so the second pass
+    // steps over the ones the first pass recorded. The Flow a top-level
+    // statement reports is discarded: the resolver rejects a `return` outside a
+    // function, so nothing at this level can report anything but Normal.
+    for (const Node &statement : statements)
+        if (!tryAs<FunctionNode>(statement))
+            executeStatement(statement);
 }

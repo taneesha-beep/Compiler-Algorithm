@@ -25,7 +25,10 @@ enum class NodeType
     Print,
     Block,
     If,
-    While
+    While,
+    Function,
+    Call,
+    Return
 };
 
 // ON THE SPLIT. Until item 1.2 there was one ASTNode struct with a `value`
@@ -205,6 +208,87 @@ struct WhileNode : ASTNode
     WhileNode(Span span, Node condition, Node body)
         : ASTNode(kind, span), condition(std::move(condition)),
           body(std::move(body)) {}
+};
+
+// One name in a function's parameter list. It carries its own span because a
+// parameter is the first construct in this language that can be *declared*
+// twice: `fn f(a, a)` is a duplicate declaration, and the caret has to point
+// at the second `a` rather than at the whole list. Item 1.3 recorded duplicate
+// declaration as inexpressible, which was true while assignment was the only
+// way to introduce a name — the second `x = 1` in a scope is a reassignment.
+// A parameter is a declaration and nothing else, so the error becomes real
+// here.
+struct Parameter
+{
+    std::string name;
+    Span span;
+
+    // The parameter's slot in the function's own frame, written by the
+    // resolver. Read by nothing until item 3.4, exactly as `IdentifierNode`'s
+    // is — binding an argument is a write to a variable, so ablation D has to
+    // index it on the same terms as every other write.
+    int slot = unresolvedSlot;
+};
+
+// A function declaration. Top-level only: the parser refuses one anywhere a
+// statement may otherwise stand, so `body` is the only place a function's
+// statements can be and no function can be declared inside another.
+//
+// Functions are **not values.** There is no node that produces one, no way to
+// pass one, and no way to store one — see the Out of scope table in the
+// roadmap, which excludes closures and first-class functions because upvalue
+// capture roughly doubles the Phase 4 VM and no benchmark needs it. A
+// consequence worth stating: function names and variable names live in two
+// separate namespaces, so `fn f(f)` is legal and the `f` inside the body is
+// the parameter, while `f(1)` is the function.
+struct FunctionNode : ASTNode
+{
+    static constexpr NodeType kind = NodeType::Function;
+
+    std::string name;
+    Span nameSpan; // just the name, for a diagnostic about the declaration
+    std::vector<Parameter> parameters;
+    Node body; // always a BlockNode
+
+    // How many slots this function's frame needs, written by the resolver.
+    // The counterpart of `resolve()`'s return value, which reports the same
+    // number for the program's own frame. Item 3.4 is what sizes a per-call
+    // environment with it; nothing reads it before then.
+    int frameSize = 0;
+
+    FunctionNode(Span span, std::string name, Span nameSpan,
+                 std::vector<Parameter> parameters, Node body)
+        : ASTNode(kind, span), name(std::move(name)), nameSpan(nameSpan),
+          parameters(std::move(parameters)), body(std::move(body)) {}
+};
+
+// A call, which is an expression and the only thing a function name may
+// appear in. The callee is a name rather than a sub-expression, because a
+// sub-expression would have to evaluate to a function and functions are not
+// values.
+struct CallNode : ASTNode
+{
+    static constexpr NodeType kind = NodeType::Call;
+
+    std::string callee;
+    std::vector<Node> arguments;
+
+    CallNode(Span span, std::string callee, std::vector<Node> arguments)
+        : ASTNode(kind, span), callee(std::move(callee)),
+          arguments(std::move(arguments)) {}
+};
+
+// `return expr` or the bare `return`, whose `value` is null. What a bare
+// return hands back is the integer 0 — see the note on it in
+// `src/interpreter.cpp`.
+struct ReturnNode : ASTNode
+{
+    static constexpr NodeType kind = NodeType::Return;
+
+    Node value; // null for the bare form
+
+    ReturnNode(Span span, Node value)
+        : ASTNode(kind, span), value(std::move(value)) {}
 };
 
 // Builds a node of type T. `make_shared` is what captures the concrete type for

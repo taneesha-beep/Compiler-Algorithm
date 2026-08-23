@@ -125,14 +125,26 @@ int main(int argc, char *argv[])
             narrate << "=== Stage 3: Resolution ===" << std::endl;
         }
 
-        // Stage 3: Resolution — scopes checked, and a frame slot written onto
-        // every variable reference. The slot count is narration only until
-        // item 3.4, which is what sizes an environment with it.
+        // Stage 3: Resolution — scopes checked, calls checked against the
+        // functions that exist, and a frame slot written onto every variable
+        // reference. The slot count is narration only until item 3.4, which is
+        // what sizes an environment with it.
         const int slots = resolve(ast);
         if (trace)
         {
-            narrate << "  Resolved " << slots << " variable(s) into frame slots."
-                    << std::endl;
+            // The program's own frame, named as such: since item 1.4 every
+            // function has a frame of its own, and `resolve` reports the
+            // width of this one. A function's is on its node.
+            narrate << "  Resolved " << slots
+                    << " variable(s) into the program's frame." << std::endl;
+
+            std::size_t functions = 0;
+            for (const Node &statement : ast)
+                if (tryAs<FunctionNode>(statement))
+                    functions++;
+            narrate << "  Resolved " << functions
+                    << " function(s), each into a frame of its own." << std::endl;
+
             narrate << "=== Stage 4: Output ===" << std::endl;
         }
 

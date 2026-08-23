@@ -14,6 +14,36 @@ std::string describe(const Token &token)
     return "'" + token.value + "'";
 }
 
+// Whether a token can begin an expression — the grammar's FIRST set for the
+// expression rule, written out.
+//
+// Exactly one construct needs it: `return`, whose value is optional. The
+// language ignores line breaks everywhere else, so `return` cannot ask whether
+// the next token is on the same line; it has to ask whether the next token
+// could start a value at all. `return }` and `return print 1` are therefore
+// bare returns, and `return x` is not.
+//
+// The one place that reading bites: `return` followed on the *next line* by a
+// statement beginning with a name — `return` then `x = 1` — takes the `x` as
+// the returned value and then fails on the `=`. That is the same
+// whitespace-insensitivity that lets `tests/while_sum.algo` put two statements
+// on one line, and the cure for it would be significant newlines, which is a
+// language change no item lists.
+bool startsExpression(TokenType type)
+{
+    switch (type)
+    {
+    case TokenType::NUMBER:
+    case TokenType::BOOLEAN:
+    case TokenType::IDENTIFIER:
+    case TokenType::MINUS:
+    case TokenType::NOT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } // namespace
 
 Token Parser::current() { return tokens[pos]; }
@@ -30,14 +60,50 @@ Token Parser::expect(TokenType type, const std::string &errMsg)
 
 Parser::Parser(std::vector<Token> tokens) : tokens(tokens) {}
 
+// The top level is the only place a function may be declared, so it is the
+// only place that looks for one. Everywhere else `parseStatement` runs, and it
+// rejects `fn` with a message saying where a function may go.
 std::vector<Node> Parser::parse()
 {
     std::vector<Node> statements;
     while (current().type != TokenType::END_OF_FILE)
     {
-        statements.push_back(parseStatement());
+        if (current().type == TokenType::FN)
+            statements.push_back(parseFunction());
+        else
+            statements.push_back(parseStatement());
     }
     return statements;
+}
+
+Node Parser::parseFunction()
+{
+    Token keyword = consume(); // eat 'fn'
+    Token name = expect(TokenType::IDENTIFIER, "expected a function name after 'fn'");
+    expect(TokenType::LEFT_PAREN, "expected '(' after the function name");
+
+    // A parameter carries its own span so that a duplicate one can be pointed
+    // at individually. Names are not checked for duplicates here: that is a
+    // question about declarations, which is the resolver's subject.
+    std::vector<Parameter> parameters;
+    if (current().type != TokenType::RIGHT_PAREN)
+    {
+        while (true)
+        {
+            Token parameter =
+                expect(TokenType::IDENTIFIER, "expected a parameter name");
+            parameters.push_back(Parameter{parameter.value, parameter.span});
+            if (current().type != TokenType::COMMA)
+                break;
+            consume(); // eat ','
+        }
+    }
+
+    expect(TokenType::RIGHT_PAREN, "expected ')' to close the parameter list");
+    Node body = parseBlock();
+    return makeNode<FunctionNode>(mergeSpans(keyword.span, body->span),
+                                  name.value, name.span, std::move(parameters),
+                                  body);
 }
 
 Node Parser::parseStatement()
@@ -56,8 +122,21 @@ Node Parser::parseStatement()
     if (current().type == TokenType::WHILE)
         return parseWhile();
 
+    if (current().type == TokenType::RETURN)
+        return parseReturn();
+
     if (current().type == TokenType::LEFT_BRACE)
         return parseBlock();
+
+    // Reached from inside a block, or from the top level for a `fn` that
+    // `parse` did not take — which cannot happen, since `parse` takes every
+    // one. So this fires only for a function declared inside a block, an `if`,
+    // a `while` or another function, and says so rather than reporting a
+    // statement that cannot start with `fn`.
+    if (current().type == TokenType::FN)
+        throw CompileError(Diagnostic{
+            Severity::Error, current().span,
+            "a function may only be declared at the top level"});
 
     if (current().type == TokenType::IDENTIFIER)
     {
@@ -120,6 +199,20 @@ Node Parser::parseWhile()
     Node body = parseBlock();
     return makeNode<WhileNode>(mergeSpans(keyword.span, body->span), condition,
                                body);
+}
+
+// `return` with a value, and the bare `return` whose value is null. Which one
+// this is settles here, at parse time, by asking whether what follows could
+// begin an expression at all — see `startsExpression` above.
+Node Parser::parseReturn()
+{
+    Token keyword = consume(); // eat 'return'
+
+    if (!startsExpression(current().type))
+        return makeNode<ReturnNode>(keyword.span, nullptr);
+
+    Node value = parseExpr();
+    return makeNode<ReturnNode>(mergeSpans(keyword.span, value->span), value);
 }
 
 Node Parser::parseExpr() { return parseEquality(); }
@@ -235,7 +328,36 @@ Node Parser::parsePrimary()
     if (current().type == TokenType::IDENTIFIER)
     {
         Token name = consume();
-        return makeNode<IdentifierNode>(name.span, name.value);
+
+        // A name followed by `(` is a call and a name on its own is a
+        // variable. The two are told apart by one token of lookahead and
+        // nowhere else — there is no call whose callee is an expression,
+        // because that expression would have to evaluate to a function and
+        // functions are not values.
+        if (current().type != TokenType::LEFT_PAREN)
+            return makeNode<IdentifierNode>(name.span, name.value);
+
+        consume(); // eat '('
+
+        std::vector<Node> arguments;
+        if (current().type != TokenType::RIGHT_PAREN)
+        {
+            while (true)
+            {
+                arguments.push_back(parseExpr());
+                if (current().type != TokenType::COMMA)
+                    break;
+                consume(); // eat ','
+            }
+        }
+
+        Token close =
+            expect(TokenType::RIGHT_PAREN, "expected ')' to close the argument list");
+        // The call spans the callee's first character through the ')', so a
+        // diagnostic about the call — a wrong arity, an exhausted call
+        // depth — underlines the whole of it.
+        return makeNode<CallNode>(mergeSpans(name.span, close.span), name.value,
+                                  std::move(arguments));
     }
     throw CompileError(Diagnostic{
         Severity::Error, current().span,

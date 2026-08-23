@@ -26,20 +26,41 @@ public:
     //   identifier = <expr>
     //   if <expr> <block> ( else ( <if> | <block> ) )?
     //   while <expr> <block>
+    //   return <expr>?
     //   <block>
     //
-    // ON THE ABSENCE OF PARENTHESES. The condition of an `if` or a `while` is
-    // not parenthesised, and the braces are mandatory. The language has no
-    // grouping parentheses at all — `(1 + 2) * 3` does not parse and item 1.2
-    // does not add it, because grouping is not a feature the roadmap lists.
-    // Writing `if (x < 1) { }` would therefore have introduced a `(` that works
-    // in exactly one position and nowhere else, which reads like an oversight
-    // rather than a rule. Mandatory braces also settle the dangling `else`
-    // outright: an `else` can only attach to an `if` whose block has closed.
+    // A function declaration is not in that list. It is only legal at the top
+    // level, so `parse` handles it and `parseStatement` rejects it wherever it
+    // is reached from — which is every position inside a block.
+    //
+    // ON THE ABSENCE OF PARENTHESES, revisited for item 1.4. The condition of
+    // an `if` or a `while` is still not parenthesised, the braces are still
+    // mandatory, and the language still has no grouping parentheses at all:
+    // `(1 + 2) * 3` does not parse. Item 1.4 introduces `(` in two new
+    // positions — a call's argument list and a function's parameter list — and
+    // the reasoning recorded in item 1.2 survives that intact rather than
+    // being overtaken by it. That reasoning was never "the language has no
+    // `(`"; it was that a `(` which worked in exactly one position and nowhere
+    // else would read as an oversight rather than as a rule. The rule the two
+    // new positions obey is stateable in one line and holds everywhere: **a
+    // `(` follows a name and delimits an argument or parameter list, and never
+    // groups an expression.** `if (x < 1) { }` is still rejected, because
+    // there is no name in front of the `(`.
+    //
+    // Adding grouping parentheses would be a language feature, and no roadmap
+    // item lists one. The cost of not having them is real and bounded: an
+    // expression's shape is fixed by the precedence cascade, so a program that
+    // needs `(a + b) * c` has to name the sum first. Mandatory braces also
+    // settle the dangling `else` outright: an `else` can only attach to an
+    // `if` whose block has closed.
     Node parseStatement();
     Node parseBlock();
     Node parseIf();
     Node parseWhile();
+    Node parseReturn();
+
+    // A function declaration, reached only from `parse`. Item 1.4.
+    Node parseFunction();
 
     // ONE FUNCTION PER PRECEDENCE LEVEL, loosest first:
     //
@@ -62,5 +83,5 @@ public:
     Node parseTerm();       // + -
     Node parseFactor();     // * /
     Node parseUnary();      // prefix - !
-    Node parsePrimary();    // literals and names
+    Node parsePrimary();    // literals, names, and calls
 };

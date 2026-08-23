@@ -1,0 +1,3 @@
+error_arity.algo:5:7: error: function 'add' expects 2 arguments, but 3 were given
+print add(1, 2, 3)
+      ^~~~~~~~~~~~
