@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/taneesha-beep/algo-vm/actions/workflows/ci.yml/badge.svg)](https://github.com/taneesha-beep/algo-vm/actions/workflows/ci.yml)
 
-A compiler for a simple algorithmic language, built from scratch in C++20. Takes a `.algo` source file through all four classical compiler stages: lexical analysis, parsing, semantic analysis, and interpretation.
+A compiler for a simple algorithmic language, built from scratch in C++20. Takes a `.algo` source file through four stages: lexical analysis, parsing, resolution, and interpretation.
 
 *This repository began as a four-person college coursework project. That inherited state is
 tagged [`v0-coursework`](https://github.com/taneesha-beep/algo-vm/releases/tag/v0-coursework);
@@ -68,8 +68,8 @@ print z
   ...
 === Stage 2: Parsing ===
   Parsed 4 statement(s) successfully.
-=== Stage 3: Semantic Analysis ===
-  No semantic errors found.
+=== Stage 3: Resolution ===
+  Resolved 3 variable(s) into frame slots.
 === Stage 4: Output ===
 ```
 
@@ -92,8 +92,10 @@ equality → comparison → term → factor → unary → primary
 
 Each level parses the level below it and then loops on its own operators, so the level that runs last binds loosest. Every node the parser builds is its own struct with named fields — a `BinOpNode` has `left` and `right`, an `IfNode` has a condition and two branches, a `BlockNode` has a statement list — reached through a tag check that hands back the concrete type.
 
-**Stage 3 — Semantic Analysis**
-Walks the AST before execution to catch use-before-assignment errors. Points a caret at the *use*, not at the missing assignment — the offending node is the identifier itself.
+**Stage 3 — Resolver**
+Walks the AST before execution carrying a scope stack, and does two things with it. It rejects a name that is not in scope where it is used, pointing the caret at the *use* rather than at the missing assignment — the offending node is the identifier itself. And it assigns every variable a **slot index within its enclosing function frame**, writing that integer onto each node that names it.
+
+Nothing reads those slots yet, deliberately. The interpreter goes on looking each name up by string in a `std::map`, and replacing that map with an array indexed by slot is a later, separately measured change — so the resolver's output waits for the commit that spends it.
 
 **Stage 4 — Tree-Walk Interpreter**
 Recursively evaluates the AST. Maintains a `std::map` as the variable environment. Executes `print` statements by evaluating the expression subtree and writing to stdout. Values are a tagged union of an integer and a boolean — there is no implicit conversion between them, so an integer is not truthy and a boolean is not 0 or 1.
@@ -121,6 +123,8 @@ Conditions are **not parenthesised** and braces are **mandatory** — `if x < 1 
 
 Types do not mix. Arithmetic and ordering take two integers, `==` and `!=` take two operands of the same type, `!` takes a boolean and unary `-` an integer, and a condition must be a boolean. Anything else is a runtime fault, because the language has no type checker — whether `x + 1` is well typed depends on what the program computed.
 
+The language has **no comment syntax**, so every listing below is source exactly as it can be run, with its output shown beneath it.
+
 ```
 i = 1
 total = 0
@@ -128,10 +132,37 @@ while i <= 100 {
     total = total + i
     i = i + 1
 }
-print total          # 5050
+print total
 ```
 
-A block does not yet introduce a scope: a variable assigned inside one is the same variable outside it. Scoping and shadowing arrive with the resolver.
+```
+5050
+```
+
+A block introduces a scope. There is no `var` or `let` — an assignment is what brings a variable into existence — so which of the two a given assignment does depends on what is visible where it stands:
+
+```
+total = 0
+{
+    total = total + 1
+    label = 100
+    print label
+}
+print total
+```
+
+`total` is visible inside the block, so the first assignment writes it; `label` is visible nowhere, so the second declares it there. The output is `100` then `1`.
+
+A variable first assigned inside a block is a *different variable* from a same-named one in any other scope, and it is gone at the closing brace — so mentioning `label` after that block is a compile error, not a lookup that fails at run time:
+
+```
+$ ./build/algo out_of_scope.algo
+out_of_scope.algo:5:7: error: variable 'label' used outside the block that assigns it
+print label
+      ^~~~~
+```
+
+The rule cuts the other way too, and has to: `while i <= 100 { total = total + i }` assigns the `total` and `i` it can already see, which is what lets a loop accumulate at all.
 
 ---
 
@@ -169,7 +200,7 @@ A literal too wide for the value type is classed **compile-time**, not runtime, 
 
 ## Testing & CI
 
-The suite is nineteen CTest cases: sixteen golden-file cases and three unit tests.
+The suite is twenty-three CTest cases: nineteen golden-file cases and four unit tests.
 
 Golden-file cases live in `tests/`, each a `.algo` input paired with the output it should produce:
 
@@ -183,12 +214,15 @@ Golden-file cases live in `tests/`, each a `.algo` input paired with the output 
 | `comparisons`            | All six comparison operators                     |
 | `booleans`               | `true`/`false`, `!`, and printing a boolean      |
 | `blocks`                 | Nested blocks, and statements running in order   |
+| `scopes`                 | Two sibling blocks, each with its own local      |
 | `if_else_chain`          | `if` / `else if` / `else` selecting correctly    |
 | `while_sum`              | A `while` loop summing 1..100                    |
 | `while_never_runs`       | A `while` testing before it runs its body        |
 | `error_div_zero`         | Runtime error: division by zero                  |
 | `error_overflow`         | Runtime error: integer literal overflow          |
-| `error_undef`            | Semantic error: variable used before assignment  |
+| `error_undef`            | Resolution error: a name never assigned anywhere |
+| `error_out_of_scope`     | Resolution error: a name used after its block ended |
+| `error_while_local`      | Resolution error: a name local to a loop body    |
 | `error_type_mismatch`    | Runtime error: an operator applied across types  |
 | `error_condition_type`   | Runtime error: a condition that is not a boolean |
 
@@ -288,7 +322,7 @@ algo/
 │   ├── ast.h                            # AST node definitions — one struct per node type
 │   ├── value.h                          # The runtime value type: a tagged integer or boolean
 │   ├── parser.h / parser.cpp            # Stage 2: token stream → AST
-│   ├── semantic.h / semantic.cpp        # Stage 3: use-before-assignment checks
+│   ├── resolver.h / resolver.cpp        # Stage 3: scopes, and a frame slot per variable
 │   └── interpreter.h / interpreter.cpp  # Stage 4: tree-walk evaluation
 └── tests/
     ├── *.algo                           # Golden-file case inputs
@@ -298,5 +332,6 @@ algo/
     ├── span_test.cpp                    # Unit test: source spans on tokens and AST nodes
     ├── diagnostic_test.cpp              # Unit test: diagnostic rendering and error classification
     ├── expression_test.cpp              # Unit test: the value type and the precedence cascade
+    ├── resolver_test.cpp                # Unit test: scoping, and the slot on every variable
     └── run_case.cmake                   # CTest driver script that runs a case and compares it
 ```
