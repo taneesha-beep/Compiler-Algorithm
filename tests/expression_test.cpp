@@ -107,7 +107,7 @@ Outcome evaluateExpression(const std::string &expression, Value &out)
         std::vector<Node> ast = parser.parse();
         semanticCheck(ast);
         Interpreter interpreter;
-        out = interpreter.evaluate(ast[0]->left);
+        out = interpreter.evaluate(tryAs<AssignNode>(ast[0])->value);
     }
     catch (const CompileError &)
     {
@@ -250,7 +250,7 @@ Node parseOneExpression(const std::string &expression)
     {
         const std::string source = "x = " + expression + "\n";
         Parser parser(lex(source));
-        return parser.parse()[0]->left;
+        return tryAs<AssignNode>(parser.parse()[0])->value;
     }
     catch (const DiagnosticError &e)
     {
@@ -275,17 +275,20 @@ void unaryBindsTighterThanMultiplication()
     Node root = parseOneExpression("-2 * 3");
     if (!parsed(root, "-2 * 3 parses"))
         return;
-    check(root->type == NodeType::BinOp && root->value == "*",
+    const BinOpNode *product = tryAs<BinOpNode>(root);
+    check(product != nullptr && product->op == "*",
           "-2 * 3 is rooted at the multiplication, not at the negation");
-    if (root->type != NodeType::BinOp)
+    if (!product)
         return;
-    check(root->left->type == NodeType::UnaryOp && root->left->value == "-",
+    const UnaryOpNode *negation = tryAs<UnaryOpNode>(product->left);
+    check(negation != nullptr && negation->op == "-",
           "its left operand is the negation of 2");
-    check(root->left->left->type == NodeType::Number &&
-              root->left->left->value == "2",
-          "the negation applies to 2 alone");
-    check(root->right->type == NodeType::Number && root->right->value == "3",
-          "its right operand is 3");
+    if (!negation)
+        return;
+    const NumberNode *two = tryAs<NumberNode>(negation->operand);
+    check(two != nullptr && two->text == "2", "the negation applies to 2 alone");
+    const NumberNode *three = tryAs<NumberNode>(product->right);
+    check(three != nullptr && three->text == "3", "its right operand is 3");
 }
 
 void aPrefixOperatorRecursesRatherThanLoops()
@@ -294,12 +297,15 @@ void aPrefixOperatorRecursesRatherThanLoops()
     Node root = parseOneExpression("- -5");
     if (!parsed(root, "- -5 parses"))
         return;
-    check(root->type == NodeType::UnaryOp, "- -5 is rooted at a negation");
-    if (root->type != NodeType::UnaryOp)
+    const UnaryOpNode *outer = tryAs<UnaryOpNode>(root);
+    check(outer != nullptr, "- -5 is rooted at a negation");
+    if (!outer)
         return;
-    check(root->left->type == NodeType::UnaryOp,
-          "which applies to a second negation");
-    check(root->left->left->type == NodeType::Number,
+    const UnaryOpNode *inner = tryAs<UnaryOpNode>(outer->operand);
+    check(inner != nullptr, "which applies to a second negation");
+    if (!inner)
+        return;
+    check(tryAs<NumberNode>(inner->operand) != nullptr,
           "which applies to the literal");
 }
 
@@ -307,38 +313,43 @@ void theCascadeNestsInTheStatedOrder()
 {
     // equality -> comparison -> term -> factor -> unary -> primary, read off
     // one expression that exercises every boundary at once.
-    Node equality = parseOneExpression("1 + 2 * -3 < 4 == true");
-    if (!parsed(equality, "the whole cascade parses"))
+    Node root = parseOneExpression("1 + 2 * -3 < 4 == true");
+    if (!parsed(root, "the whole cascade parses"))
         return;
-    check(equality->type == NodeType::BinOp && equality->value == "==",
+
+    const BinOpNode *equality = tryAs<BinOpNode>(root);
+    check(equality != nullptr && equality->op == "==",
           "the loosest operator, ==, is at the root");
-    if (equality->type != NodeType::BinOp)
+    if (!equality)
         return;
 
-    Node comparison = equality->left;
-    check(comparison->type == NodeType::BinOp && comparison->value == "<",
+    const BinOpNode *comparison = tryAs<BinOpNode>(equality->left);
+    check(comparison != nullptr && comparison->op == "<",
           "comparison sits directly under equality");
-    if (comparison->type != NodeType::BinOp)
+    if (!comparison)
         return;
 
-    Node term = comparison->left;
-    check(term->type == NodeType::BinOp && term->value == "+",
+    const BinOpNode *term = tryAs<BinOpNode>(comparison->left);
+    check(term != nullptr && term->op == "+",
           "term sits directly under comparison");
-    if (term->type != NodeType::BinOp)
+    if (!term)
         return;
 
-    Node factor = term->right;
-    check(factor->type == NodeType::BinOp && factor->value == "*",
+    const BinOpNode *factor = tryAs<BinOpNode>(term->right);
+    check(factor != nullptr && factor->op == "*",
           "factor sits directly under term");
-    if (factor->type != NodeType::BinOp)
+    if (!factor)
         return;
 
-    check(factor->right->type == NodeType::UnaryOp,
-          "unary sits directly under factor");
-    check(factor->right->left->type == NodeType::Number,
-          "primary sits directly under unary");
-    check(equality->right->type == NodeType::True,
-          "the right-hand side of == is the boolean literal");
+    const UnaryOpNode *unary = tryAs<UnaryOpNode>(factor->right);
+    check(unary != nullptr, "unary sits directly under factor");
+    if (unary)
+        check(tryAs<NumberNode>(unary->operand) != nullptr,
+              "primary sits directly under unary");
+
+    const BooleanNode *literal = tryAs<BooleanNode>(equality->right);
+    check(literal != nullptr && literal->value,
+          "the right-hand side of == is the boolean literal `true`");
 }
 
 // ============================================================

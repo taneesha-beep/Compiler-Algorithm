@@ -66,6 +66,18 @@ std::vector<Token> lex(const std::string &source)
             {
                 tokens.push_back({TokenType::PRINT, word, span});
             }
+            else if (word == "if")
+            {
+                tokens.push_back({TokenType::IF, word, span});
+            }
+            else if (word == "else")
+            {
+                tokens.push_back({TokenType::ELSE, word, span});
+            }
+            else if (word == "while")
+            {
+                tokens.push_back({TokenType::WHILE, word, span});
+            }
             else if (word == "true" || word == "false")
             {
                 tokens.push_back({TokenType::BOOLEAN, word, span});
@@ -116,6 +128,12 @@ std::vector<Token> lex(const std::string &source)
             break;
         case '/':
             type = TokenType::DIVIDE;
+            break;
+        case '{':
+            type = TokenType::LEFT_BRACE;
+            break;
+        case '}':
+            type = TokenType::RIGHT_BRACE;
             break;
         default:
             throw CompileError(Diagnostic{

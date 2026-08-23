@@ -29,7 +29,12 @@ enum class TokenType
     MINUS,
     MULTIPLY,
     DIVIDE,
+    LEFT_BRACE,
+    RIGHT_BRACE,
     PRINT,
+    IF,
+    ELSE,
+    WHILE,
     END_OF_FILE
 };
 

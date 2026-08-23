@@ -47,9 +47,17 @@ Node Parser::parseStatement()
         Token keyword = consume(); // eat 'print'
         Node expr = parseExpr();
         // The statement covers the keyword and everything printed
-        return makeNode(NodeType::Print, "",
-                        mergeSpans(keyword.span, expr->span), expr);
+        return makeNode<PrintNode>(mergeSpans(keyword.span, expr->span), expr);
     }
+
+    if (current().type == TokenType::IF)
+        return parseIf();
+
+    if (current().type == TokenType::WHILE)
+        return parseWhile();
+
+    if (current().type == TokenType::LEFT_BRACE)
+        return parseBlock();
 
     if (current().type == TokenType::IDENTIFIER)
     {
@@ -57,13 +65,61 @@ Node Parser::parseStatement()
         expect(TokenType::EQUALS, "expected '=' after variable name");
         Node expr = parseExpr();
         // The statement covers the variable name through the assigned value
-        return makeNode(NodeType::Assign, name.value,
-                        mergeSpans(name.span, expr->span), expr);
+        return makeNode<AssignNode>(mergeSpans(name.span, expr->span),
+                                    name.value, expr);
     }
 
     throw CompileError(Diagnostic{
         Severity::Error, current().span,
         "expected a statement, found " + describe(current())});
+}
+
+Node Parser::parseBlock()
+{
+    Token open = expect(TokenType::LEFT_BRACE, "expected '{'");
+
+    // Stopping at end of file as well as at '}' keeps the diagnostic on the
+    // missing brace: without it, parseStatement would report whatever it makes
+    // of the end of file instead, which is a symptom rather than the cause.
+    std::vector<Node> statements;
+    while (current().type != TokenType::RIGHT_BRACE &&
+           current().type != TokenType::END_OF_FILE)
+    {
+        statements.push_back(parseStatement());
+    }
+
+    Token close = expect(TokenType::RIGHT_BRACE, "expected '}' to close this block");
+    return makeNode<BlockNode>(mergeSpans(open.span, close.span),
+                               std::move(statements));
+}
+
+Node Parser::parseIf()
+{
+    Token keyword = consume(); // eat 'if'
+    Node condition = parseExpr();
+    Node thenBranch = parseBlock();
+
+    // `else if` is an `else` whose branch is another `if`, so a chain nests to
+    // the right and needs no separate node type. Anything else must be a block.
+    Node elseBranch;
+    if (current().type == TokenType::ELSE)
+    {
+        consume();
+        elseBranch = (current().type == TokenType::IF) ? parseIf() : parseBlock();
+    }
+
+    Span end = elseBranch ? elseBranch->span : thenBranch->span;
+    return makeNode<IfNode>(mergeSpans(keyword.span, end), condition, thenBranch,
+                            elseBranch);
+}
+
+Node Parser::parseWhile()
+{
+    Token keyword = consume(); // eat 'while'
+    Node condition = parseExpr();
+    Node body = parseBlock();
+    return makeNode<WhileNode>(mergeSpans(keyword.span, body->span), condition,
+                               body);
 }
 
 Node Parser::parseExpr() { return parseEquality(); }
@@ -80,8 +136,8 @@ Node Parser::parseEquality()
     {
         std::string op = consume().value;
         Node right = parseComparison();
-        left = makeNode(NodeType::BinOp, op,
-                        mergeSpans(left->span, right->span), left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
+                                   left, right);
     }
 
     return left;
@@ -98,8 +154,8 @@ Node Parser::parseComparison()
     {
         std::string op = consume().value;
         Node right = parseTerm();
-        left = makeNode(NodeType::BinOp, op,
-                        mergeSpans(left->span, right->span), left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
+                                   left, right);
     }
 
     return left;
@@ -116,8 +172,8 @@ Node Parser::parseTerm()
         Node right = parseFactor();
         // A BinOp runs from the first character of its left operand to the
         // last character of its right — not merely the operator token
-        left = makeNode(NodeType::BinOp, op,
-                        mergeSpans(left->span, right->span), left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
+                                   left, right);
     }
 
     return left;
@@ -132,8 +188,8 @@ Node Parser::parseFactor()
     {
         std::string op = consume().value;
         Node right = parseUnary();
-        left = makeNode(NodeType::BinOp, op,
-                        mergeSpans(left->span, right->span), left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
+                                   left, right);
     }
 
     return left;
@@ -155,8 +211,8 @@ Node Parser::parseUnary()
         Token op = consume();
         Node operand = parseUnary();
         // The span covers the operator and everything it applies to
-        return makeNode(NodeType::UnaryOp, op.value,
-                        mergeSpans(op.span, operand->span), operand);
+        return makeNode<UnaryOpNode>(mergeSpans(op.span, operand->span),
+                                     op.value, operand);
     }
 
     return parsePrimary();
@@ -167,23 +223,19 @@ Node Parser::parsePrimary()
     if (current().type == TokenType::NUMBER)
     {
         Token number = consume();
-        return makeNode(NodeType::Number, number.value, number.span);
+        return makeNode<NumberNode>(number.span, number.value);
     }
     if (current().type == TokenType::BOOLEAN)
     {
-        // Which of the two it is settles here, at parse time. The node keeps
-        // its text for the same reason a Number does — `value` is uniformly the
-        // source the node was built from — but nothing reads it again: the
-        // interpreter dispatches on the node type.
+        // Which of the two it is settles here, at parse time: the node
+        // carries a bool, and the text is not looked at again.
         Token literal = consume();
-        NodeType type =
-            (literal.value == "true") ? NodeType::True : NodeType::False;
-        return makeNode(type, literal.value, literal.span);
+        return makeNode<BooleanNode>(literal.span, literal.value == "true");
     }
     if (current().type == TokenType::IDENTIFIER)
     {
         Token name = consume();
-        return makeNode(NodeType::Identifier, name.value, name.span);
+        return makeNode<IdentifierNode>(name.span, name.value);
     }
     throw CompileError(Diagnostic{
         Severity::Error, current().span,

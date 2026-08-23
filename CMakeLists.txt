@@ -51,4 +51,14 @@ foreach(algo_case ${ALGO_TEST_CASES})
                 -DALGO_CASE=${case_name}
                 -P ${CMAKE_SOURCE_DIR}/tests/run_case.cmake
     )
+    # ON THIS TIMEOUT. Item 1.2 added `while`, so a non-terminating program is
+    # expressible for the first time and a case that hangs would otherwise hang
+    # CI until the job's own limit — 25 minutes per case under CTest's default,
+    # and the failure would read as an infrastructure problem rather than as the
+    # bug it is. The guard belongs here rather than in the interpreter: an
+    # iteration cap would be a branch inside the hot path of every benchmark
+    # Phase 3 measures, and a language semantic the roadmap does not list.
+    # Every case currently runs in about ten milliseconds, so ten seconds is
+    # three orders of magnitude of headroom and can only fire on a real hang.
+    set_tests_properties(${case_name} PROPERTIES TIMEOUT 10)
 endforeach()

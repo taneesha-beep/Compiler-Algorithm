@@ -1,0 +1,14 @@
+total = 0
+{
+    total = total + 1
+    {
+        total = total + 10
+    }
+}
+print total
+countdown = 3
+while countdown > 0 {
+    print countdown
+    countdown = countdown - 1
+}
+print !false

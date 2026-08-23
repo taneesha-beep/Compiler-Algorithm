@@ -286,6 +286,56 @@ void everyErrorSiteCarriesARealSpan()
          "c.algo:1:5: error: operator '!' cannot be applied to integer\n"
          "x = !1\n"
          "    ^~\n"},
+        // Item 1.2 gave semanticCheck a recursive shape: statements nest inside
+        // blocks, and an `if` and a `while` each hold a condition beside their
+        // body. Each of those is a place the walk can fail to reach, and a name
+        // that is never checked is a diagnostic that never fires.
+        {"a name used inside a block is still checked",
+         "if true { print zz }\n",
+         Thrown::Compile,
+         "c.algo:1:17: error: variable 'zz' used before assignment\n"
+         "if true { print zz }\n"
+         "                ^~\n"},
+        {"a name used in a while condition is still checked",
+         "while zz < 1 { print 1 }\n",
+         Thrown::Compile,
+         "c.algo:1:7: error: variable 'zz' used before assignment\n"
+         "while zz < 1 { print 1 }\n"
+         "      ^~\n"},
+        {"a name used in an if condition is still checked",
+         "if zz { print 1 }\n",
+         Thrown::Compile,
+         "c.algo:1:4: error: variable 'zz' used before assignment\n"
+         "if zz { print 1 }\n"
+         "   ^~\n"},
+        {"a name used inside an else branch is still checked",
+         "if false { print 1 } else { print zz }\n",
+         Thrown::Compile,
+         "c.algo:1:35: error: variable 'zz' used before assignment\n"
+         "if false { print 1 } else { print zz }\n"
+         "                                  ^~\n"},
+        {"a name used inside a nested block is still checked",
+         "{ { print zz } }\n",
+         Thrown::Compile,
+         "c.algo:1:11: error: variable 'zz' used before assignment\n"
+         "{ { print zz } }\n"
+         "          ^~\n"},
+        {"a condition that is not a boolean names the type it got",
+         "while 1 { print 2 }\n",
+         Thrown::Runtime,
+         "c.algo:1:7: error: a condition must be a boolean, not integer\n"
+         "while 1 { print 2 }\n"
+         "      ^\n"},
+        // The source ends in a newline, so the end-of-file token sits at the
+        // start of the empty line 2 — which the renderer echoes as the empty
+        // line it is, rather than reaching back to the line that had text on
+        // it. The caret has nothing to underline and still points somewhere.
+        {"an unclosed block reports the brace that is missing",
+         "if true { print 1\n",
+         Thrown::Compile,
+         "c.algo:2:1: error: expected '}' to close this block\n"
+         "\n"
+         "^\n"},
     };
 
     for (const Case &c : cases)
