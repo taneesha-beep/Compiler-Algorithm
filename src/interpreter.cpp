@@ -97,11 +97,25 @@ Value Interpreter::evaluate(Node node)
     }
     if (const IdentifierNode *identifier = tryAs<IdentifierNode>(node))
     {
-        // Reachable since item 1.2. semanticCheck holds one flat set of names
-        // and does not know that a block may not run, so a variable first
-        // assigned inside an `if` or a `while` body passes the check and is
-        // still absent here when the body did not execute. Item 1.3's resolver
-        // is what turns that back into a compile-time error.
+        // ON WHY THIS CANNOT FIRE. It was reachable between items 1.2 and
+        // 1.3: the flat semantic check of the day held one set of names and did
+        // not know that a block might not run, so a variable first assigned
+        // inside an `if` or a `while` body passed it and was still absent here
+        // when the body had not executed. Item 1.3's resolver closed that.
+        //
+        // For any program the resolver accepted, the name is in the map by the
+        // time this runs. The resolver accepts a use only if some assignment
+        // declared the name earlier in the source *and* in a scope enclosing
+        // the use — and a statement in an enclosing scope that stands earlier
+        // in that scope's statement list has already executed whenever a
+        // statement after it is executing. Nothing removes an entry from the
+        // map, so the assignment's write is still there.
+        //
+        // The lookup stays, for two reasons. It is what ablation D removes —
+        // `find` against an ordered map keyed on std::string is the cost item
+        // 3.4 measures, so deleting it here would quietly perform half of that
+        // ablation. And a fault beats undefined behaviour if a later item ever
+        // widens what the resolver admits.
         if (variables.find(identifier->name) == variables.end())
             throw RuntimeFault(Diagnostic{
                 Severity::Error, identifier->span,
@@ -200,17 +214,20 @@ Value Interpreter::evaluate(Node node)
 }
 
 // ON THE ABSENT SCOPE. A block groups statements and nothing more: it does not
-// push an environment, so a variable assigned inside one outlives it and an
-// inner `x` is the same `x` as the outer one. Shadowing is item 1.3's, and the
-// roadmap puts it there — 1.3's acceptance criterion is the one that reads "an
-// inner-block `x` is distinct from an outer `x`", and its resolver is what
-// carries the scope stack.
+// push an environment here, and this map is still one flat map keyed on the
+// variable's name. Scope is not missing from the language — item 1.3 put it in
+// the resolver, which carries the scope stack, decides which variable each name
+// refers to, and rejects a name used outside the block that assigns it. What is
+// deliberately missing is scope *at run time*: by the time a program reaches
+// this file, every name it can still mention refers to exactly one variable,
+// so a flat map answers every lookup the same way a stack of them would.
 //
-// Building a scope stack here would also spoil what comes after it. Ablation D
-// measures replacing this environment — one ordered map keyed on std::string —
-// with frame slots. Make it a *stack* of ordered maps now and ablation D's
-// baseline quietly becomes something the roadmap never described, so its number
-// would no longer answer the question it was written to answer.
+// It answers them by comparing strings down an ordered map, which is the point.
+// Ablation D measures replacing this environment with the frame slots the
+// resolver has already written onto the nodes. Turning it into a stack of
+// ordered maps now, or into a vector indexed by slot now, would each leave
+// ablation D measuring something the roadmap never described — and the second
+// of those *is* ablation D, performed with nothing recording what it bought.
 void Interpreter::executeStatement(const Node &statement)
 {
     if (const AssignNode *assign = tryAs<AssignNode>(statement))

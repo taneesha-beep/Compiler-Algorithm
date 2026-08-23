@@ -10,7 +10,7 @@ add_library(algo_core STATIC
     src/diagnostic.cpp
     src/lexer.cpp
     src/parser.cpp
-    src/semantic.cpp
+    src/resolver.cpp
     src/interpreter.cpp)
 target_include_directories(algo_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
@@ -35,6 +35,10 @@ add_test(NAME diagnostic_test COMMAND diagnostic_test)
 add_executable(expression_test tests/expression_test.cpp)
 target_link_libraries(expression_test PRIVATE algo_core)
 add_test(NAME expression_test COMMAND expression_test)
+
+add_executable(resolver_test tests/resolver_test.cpp)
+target_link_libraries(resolver_test PRIVATE algo_core)
+add_test(NAME resolver_test COMMAND resolver_test)
 
 # Golden-file cases: run tests/<name>.algo and compare stdout against
 # tests/<name>.expected, plus stderr and the exit code where the case supplies

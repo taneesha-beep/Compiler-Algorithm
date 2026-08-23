@@ -14,11 +14,11 @@
 
 class Interpreter
 {
-    // One flat environment, an ordered map keyed on std::string. Both halves of
-    // that are deliberate and both are measured: the map is what ablation D
-    // replaces with frame slots, and the flatness is what item 1.3 replaces
-    // with a scope stack. A block does not push a scope here — see the note in
-    // interpreter.cpp.
+    // One flat environment, an ordered map keyed on std::string, and both
+    // halves of that are deliberate. The map is what ablation D replaces with
+    // the frame slots item 1.3's resolver has already written onto the nodes.
+    // The flatness survives that resolver: scope is decided at compile time, so
+    // nothing here has to push or pop one. See the note in interpreter.cpp.
     std::map<std::string, Value> variables; // stores variable values at runtime
 
     void executeStatement(const Node &statement);

@@ -9,7 +9,7 @@
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
-#include "semantic.h"
+#include "resolver.h"
 #include "token.h"
 
 // ============================================================
@@ -122,14 +122,17 @@ int main(int argc, char *argv[])
         if (trace)
         {
             narrate << "  Parsed " << ast.size() << " statement(s) successfully." << std::endl;
-            narrate << "=== Stage 3: Semantic Analysis ===" << std::endl;
+            narrate << "=== Stage 3: Resolution ===" << std::endl;
         }
 
-        // Stage 3: Semantic Analysis
-        semanticCheck(ast);
+        // Stage 3: Resolution — scopes checked, and a frame slot written onto
+        // every variable reference. The slot count is narration only until
+        // item 3.4, which is what sizes an environment with it.
+        const int slots = resolve(ast);
         if (trace)
         {
-            narrate << "  No semantic errors found." << std::endl;
+            narrate << "  Resolved " << slots << " variable(s) into frame slots."
+                    << std::endl;
             narrate << "=== Stage 4: Output ===" << std::endl;
         }
 

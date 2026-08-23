@@ -1,0 +1,11 @@
+total = 0
+{
+    total = total + 1
+    label = 100
+    print label
+}
+{
+    label = 200
+    print label
+}
+print total

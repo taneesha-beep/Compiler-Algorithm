@@ -17,7 +17,7 @@
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
-#include "semantic.h"
+#include "resolver.h"
 #include "token.h"
 
 namespace
@@ -161,7 +161,7 @@ Thrown runAndCatch(const std::string &source, Diagnostic &out)
     {
         Parser parser(lex(source));
         std::vector<Node> ast = parser.parse();
-        semanticCheck(ast);
+        resolve(ast);
         Interpreter interpreter;
         interpreter.execute(ast);
     }
@@ -286,10 +286,13 @@ void everyErrorSiteCarriesARealSpan()
          "c.algo:1:5: error: operator '!' cannot be applied to integer\n"
          "x = !1\n"
          "    ^~\n"},
-        // Item 1.2 gave semanticCheck a recursive shape: statements nest inside
-        // blocks, and an `if` and a `while` each hold a condition beside their
-        // body. Each of those is a place the walk can fail to reach, and a name
-        // that is never checked is a diagnostic that never fires.
+        // Item 1.2 gave the pass a recursive shape and item 1.3's resolver
+        // kept it: statements nest inside blocks, and an `if` and a `while`
+        // each hold a condition beside their body. Each of those is a place the
+        // walk can fail to reach, and a name that is never checked is a
+        // diagnostic that never fires. Every name below is undeclared in any
+        // scope, so each case reaches the resolver's walk rather than its
+        // scoping rule — `tests/resolver_test.cpp` covers the scoping.
         {"a name used inside a block is still checked",
          "if true { print zz }\n",
          Thrown::Compile,

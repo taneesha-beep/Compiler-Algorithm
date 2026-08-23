@@ -21,7 +21,7 @@
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
-#include "semantic.h"
+#include "resolver.h"
 #include "token.h"
 #include "value.h"
 
@@ -105,7 +105,7 @@ Outcome evaluateExpression(const std::string &expression, Value &out)
         const std::string source = "x = " + expression + "\n";
         Parser parser(lex(source));
         std::vector<Node> ast = parser.parse();
-        semanticCheck(ast);
+        resolve(ast);
         Interpreter interpreter;
         out = interpreter.evaluate(tryAs<AssignNode>(ast[0])->value);
     }

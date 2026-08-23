@@ -1,0 +1,3 @@
+error_while_local.algo:6:7: error: variable 'doubled' used outside the block that assigns it
+print doubled
+      ^~~~~~~
