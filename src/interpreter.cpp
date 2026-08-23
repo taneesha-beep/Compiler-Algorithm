@@ -1,6 +1,8 @@
 #include "interpreter.h"
 
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 #include "diagnostic.h"
@@ -25,6 +27,56 @@ namespace
         Severity::Error, node.span,
         "operator '" + node.op + "' cannot be applied to " +
             typeName(operand.type)});
+}
+
+// ON TRAPPING OVERFLOW, AND ON WHY A BRANCH IS ALLOWED HERE.
+//
+// Item 1.5 puts an overflow check on every `+`, `-`, `*`, `/` and unary `-`.
+// That is the hot path of every benchmark Phase 3 measures — not a narrow one —
+// so the argument that admitted item 1.4's call-depth limit is *not available*
+// and the case has to be made differently. 1.4's limit costs one comparison per
+// **call**, so a loop benchmark pays nothing for it; this costs something on
+// every arithmetic operation, and every benchmark pays it.
+//
+// It does not distort the ablation series, for a different reason: **the cost
+// is uniform across every configuration, so it cancels in every delta.** The
+// check is in configuration N, in each of `perf/iso-a`…`perf/iso-e`, in each of
+// `perf/cum-a`…`perf/cum-e`, and in Phase 4's VM — which has to trap
+// identically or item 4.4's differential testing would be comparing two
+// languages. No ablation removes it, so it never appears as anyone's delta, and
+// a term present in both endpoints of a subtraction subtracts out.
+//
+// What it does change is the *ratio*, and in the safe direction: a constant
+// added to both sides of N→V and H→V moves each of them toward 1, so the
+// headline speedup this project reports is understated by however much the
+// check costs, never overstated. The one place the cancellation is not exact is
+// wall-clock, where this branch competes for the same execution resources the
+// interaction residual is about; instruction counts under cachegrind cancel
+// exactly, one extra test per arithmetic operation in every configuration.
+// Phase 5.3 is where that limit gets written down.
+//
+// And it is deliberately **not** a sixth ablation. Every ablation A–E preserves
+// what the program computes and changes only how fast it is computed. Removing
+// this one would make arithmetic wrap — a different language, and one whose
+// results are undefined behaviour — so there is nothing honest to compare
+// against.
+//
+// The caret goes on the whole operation, matching what division by zero and a
+// type fault already do: neither operand is individually wrong, the result of
+// combining them is.
+[[noreturn]] void binaryOverflowFault(const BinOpNode &node)
+{
+    throw RuntimeFault(Diagnostic{Severity::Error, node.span,
+                                  "integer overflow in '" + node.op + "'"});
+}
+
+// Worded apart from the binary form because `-` names two different operators
+// and a reader staring at `0 - x` needs to know which one trapped.
+[[noreturn]] void unaryOverflowFault(const UnaryOpNode &node)
+{
+    throw RuntimeFault(Diagnostic{
+        Severity::Error, node.span,
+        "integer overflow in unary '" + node.op + "'"});
 }
 
 // Arithmetic and ordering are integer-only. See the type rules in value.h.
@@ -74,9 +126,29 @@ Value Interpreter::evaluate(Node node)
         // observable exit code 70 -> 65 in the middle of the ablation series,
         // which is exactly the contamination this project exists to avoid. The
         // exit code is fixed now so that 3.2 changes only when the check runs.
+        //
+        // ON `stoll` RATHER THAN `stoi`. Item 1.5 widened the value's integer
+        // arm to `std::int64_t`, and `std::stoi` returns an `int` — leaving it
+        // here would have given the language a 64-bit value type that could
+        // not hold a literal past 2147483647, which is a 32-bit language with
+        // extra padding. This is the one place the plan's "widening the arm
+        // touches nothing else" was not true.
+        //
+        // What did NOT change is *when* this runs. The digits are still stored
+        // as text on the node and re-parsed on every evaluation, which is
+        // ablation B's entire subject; item 3.2 is what moves the parse — and
+        // this range check with it — to parse time. Doing that here would
+        // perform ablation B with nothing recording what it bought.
+        static_assert(std::numeric_limits<long long>::max() ==
+                          std::numeric_limits<std::int64_t>::max() &&
+                      std::numeric_limits<long long>::min() ==
+                          std::numeric_limits<std::int64_t>::min(),
+                      "stoll's range must be exactly the value arm's, or a "
+                      "literal between the two would truncate silently "
+                      "instead of being reported as out of range");
         try
         {
-            return Value::fromInt(std::stoi(number->text));
+            return Value::fromInt(std::stoll(number->text));
         }
         catch (const std::out_of_range &)
         {
@@ -145,17 +217,26 @@ Value Interpreter::evaluate(Node node)
         if (op == "+")
         {
             requireIntegers(*binary, left, right);
-            return Value::fromInt(left.integer + right.integer);
+            std::int64_t result;
+            if (__builtin_add_overflow(left.integer, right.integer, &result))
+                binaryOverflowFault(*binary);
+            return Value::fromInt(result);
         }
         if (op == "-")
         {
             requireIntegers(*binary, left, right);
-            return Value::fromInt(left.integer - right.integer);
+            std::int64_t result;
+            if (__builtin_sub_overflow(left.integer, right.integer, &result))
+                binaryOverflowFault(*binary);
+            return Value::fromInt(result);
         }
         if (op == "*")
         {
             requireIntegers(*binary, left, right);
-            return Value::fromInt(left.integer * right.integer);
+            std::int64_t result;
+            if (__builtin_mul_overflow(left.integer, right.integer, &result))
+                binaryOverflowFault(*binary);
+            return Value::fromInt(result);
         }
         if (op == "/")
         {
@@ -165,6 +246,18 @@ Value Interpreter::evaluate(Node node)
             if (right.integer == 0)
                 throw RuntimeFault(Diagnostic{Severity::Error, binary->span,
                                               "division by zero"});
+            // The one division that overflows, and the reason there is no
+            // `__builtin_div_overflow` to call: it is a single pair of
+            // operands rather than a range. The two's-complement range is
+            // asymmetric, so negating the most negative value lands one past
+            // the maximum — and `INT64_MIN / -1` *is* that negation. Left
+            // unchecked it is undefined behaviour, and on x86-64 it faults the
+            // process outright rather than wrapping, which is a crash with no
+            // diagnostic. Checked in this order so a zero divisor, which a
+            // reader will actually hit, is reported as division by zero.
+            if (left.integer == std::numeric_limits<std::int64_t>::min() &&
+                right.integer == -1)
+                binaryOverflowFault(*binary);
             return Value::fromInt(left.integer / right.integer);
         }
         if (op == "<")
@@ -207,7 +300,16 @@ Value Interpreter::evaluate(Node node)
         {
             if (!operand.isInt())
                 unaryTypeFault(*unary, operand);
-            return Value::fromInt(-operand.integer);
+            // `-INT64_MIN` is the whole of it — see the note on `/` above for
+            // why the range's asymmetry makes exactly one value unnegatable.
+            // Written as a subtraction from zero so that the check is the same
+            // builtin the binary operators use rather than a second mechanism
+            // spelled by hand.
+            std::int64_t result;
+            if (__builtin_sub_overflow(static_cast<std::int64_t>(0),
+                                       operand.integer, &result))
+                unaryOverflowFault(*unary);
+            return Value::fromInt(result);
         }
         if (op == "!")
         {

@@ -1,4 +1,8 @@
 build/
+# Item 1.5 added -DALGO_SANITIZE=ON, which is built into a directory of its own
+# so it never shadows the default build Phase 2 measures. `build/` does not
+# match it — that pattern names one directory exactly.
+build-*/
 cmake-build*
 .idea/
 .vs/

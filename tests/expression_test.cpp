@@ -11,7 +11,9 @@
 // no third-party test framework, in keeping with the project having no external
 // dependencies.
 
+#include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -44,8 +46,8 @@ void check(bool condition, const std::string &what)
 // The value type
 // ============================================================
 
-// The representation is chosen, not incidental: item 1.5 widens the integer arm
-// to int64_t and Phase 3 measures this exact type being returned from every
+// The representation is chosen, not incidental: item 1.5 widened the integer arm
+// to std::int64_t and Phase 3 measures this exact type being returned from every
 // node of the tree. These checks pin the properties that choice rests on.
 void theValueTypeIsATaggedUnion()
 {
@@ -75,8 +77,21 @@ void theValueTypeIsATaggedUnion()
     // node rather than anything on the value.
     check(std::is_trivially_copyable<Value>::value,
           "a Value is trivially copyable — it owns nothing");
-    check(sizeof(Value) <= 2 * sizeof(int),
+    // Item 1.5 widened the arm, so this bound had to move with it: it read
+    // `2 * sizeof(int)` while the arm was an `int`, and that is now smaller
+    // than a Value can possibly be. The claim being made is unchanged — a tag
+    // beside ONE arm — so the bound is still one arm plus enough for the tag
+    // and its padding, measured against the arm the union actually has.
+    check(sizeof(Value) <= 2 * sizeof(std::int64_t),
           "a Value is a tag beside one arm, not a struct with both");
+
+    // The point of the widening, asserted on the type rather than inferred
+    // from a program's output: the arm is exactly 64 bits, not merely at least
+    // as wide as an int.
+    check(sizeof(Value::fromInt(0).integer) == 8,
+          "the integer arm is 64 bits wide");
+    check(std::is_same<decltype(Value::fromInt(0).integer), std::int64_t>::value,
+          "the integer arm is std::int64_t exactly");
 
     check(std::string(typeName(ValueType::Int)) == "integer",
           "the Int arm is called 'integer' in a diagnostic");
@@ -120,7 +135,12 @@ Outcome evaluateExpression(const std::string &expression, Value &out)
     return Outcome::Value;
 }
 
-void checkInt(const std::string &expression, int expected)
+// Takes its expectation as an int64 since item 1.5: a check written against an
+// `int` could not state what the widening bought, and `%d` against a 64-bit
+// argument is undefined behaviour that only shows up on the failure path — so
+// a test whose report was broken would have looked fine until the day it had
+// something to report.
+void checkInt(const std::string &expression, std::int64_t expected)
 {
     Value value;
     Outcome outcome = evaluateExpression(expression, value);
@@ -129,14 +149,16 @@ void checkInt(const std::string &expression, int expected)
         return;
     failures++;
     if (outcome != Outcome::Value)
-        std::fprintf(stderr, "FAIL %s: raised an error, expected %d\n",
-                     expression.c_str(), expected);
+        std::fprintf(stderr, "FAIL %s: raised an error, expected %lld\n",
+                     expression.c_str(), static_cast<long long>(expected));
     else if (!value.isInt())
-        std::fprintf(stderr, "FAIL %s: got a boolean, expected the integer %d\n",
-                     expression.c_str(), expected);
+        std::fprintf(stderr, "FAIL %s: got a boolean, expected the integer %lld\n",
+                     expression.c_str(), static_cast<long long>(expected));
     else
-        std::fprintf(stderr, "FAIL %s: got %d, expected %d\n",
-                     expression.c_str(), value.integer, expected);
+        std::fprintf(stderr, "FAIL %s: got %lld, expected %lld\n",
+                     expression.c_str(),
+                     static_cast<long long>(value.integer),
+                     static_cast<long long>(expected));
 }
 
 void checkBool(const std::string &expression, bool expected)
@@ -443,6 +465,150 @@ void theTwoArmsDoNotMix()
     checkInt("-1", -1);
 }
 
+// ============================================================
+// The range, and its edge — roadmap item 1.5
+// ============================================================
+
+// Runs a whole program and hands back the message of whatever it raised, or
+// "" if it ran clean.
+//
+// A whole program rather than one expression, because the cases that matter
+// need a variable. The most negative integer is not writable as a literal —
+// the lexer makes a number out of digits alone, so `-9223372036854775808` is
+// unary minus applied to an out-of-range literal — and the language has no
+// grouping parentheses, so it cannot be built inline either. It has to be
+// computed into a name first.
+//
+// The *message* rather than just the fault, because a check asserting only
+// "some runtime fault" would still pass if an overflow were reported as a type
+// mismatch or a division by zero, and those are three different bugs.
+std::string faultMessage(const std::string &source)
+{
+    try
+    {
+        Parser parser(lex(source));
+        std::vector<Node> ast = parser.parse();
+        resolve(ast);
+        Interpreter interpreter;
+        interpreter.execute(ast);
+    }
+    catch (const DiagnosticError &e)
+    {
+        return e.diagnostic().message;
+    }
+    return "";
+}
+
+// Assigns the most negative integer to `least`, which is the only way to get
+// one. Every check below that needs it starts here.
+const char *leastPrelude = "least = 0 - 9223372036854775807\nleast = least - 1\n";
+
+void checkFault(const std::string &what, const std::string &source,
+                const std::string &expected)
+{
+    const std::string actual = faultMessage(source);
+    checks++;
+    if (actual == expected)
+        return;
+    failures++;
+    std::fprintf(stderr, "FAIL %s: got \"%s\", expected \"%s\"\n", what.c_str(),
+                 actual.c_str(), expected.c_str());
+}
+
+void checkRuns(const std::string &what, const std::string &source)
+{
+    const std::string actual = faultMessage(source);
+    checks++;
+    if (actual.empty())
+        return;
+    failures++;
+    std::fprintf(stderr, "FAIL %s: raised \"%s\", expected it to run\n",
+                 what.c_str(), actual.c_str());
+}
+
+// The widening is the item; these are the values that could not be held before
+// it. Each one needs more than 32 bits, so every check here fails against the
+// `int` arm rather than merely passing for a different reason.
+void theIntegerArmHoldsSixtyFourBits()
+{
+    checkInt("9223372036854775807", std::numeric_limits<std::int64_t>::max());
+    checkInt("2147483647 + 1", 2147483648LL);
+    checkInt("2147483647 * 2147483647", 4611686014132420609LL);
+    checkInt("4294967296 * 2147483647", 9223372032559808512LL);
+    checkInt("0 - 9223372036854775807",
+             -std::numeric_limits<std::int64_t>::max());
+
+    // One past the maximum is where the literal stops being accepted, and it
+    // is a *compile* error rather than a fault — a property of the token's
+    // text, not of anything computed. The pair pins the boundary exactly:
+    // shift it by one in either direction and one of these two fails.
+    Value ignored;
+    check(evaluateExpression("9223372036854775807", ignored) == Outcome::Value,
+          "the largest integer is a literal");
+    check(evaluateExpression("9223372036854775808", ignored) ==
+              Outcome::CompileError_,
+          "one past the largest integer is a compile error");
+}
+
+// Every site that can trap, including the two that are not addition,
+// subtraction or multiplication. See the table at the bottom of value.h.
+void arithmeticTrapsRatherThanWrapping()
+{
+    checkFault("addition past the maximum",
+               "x = 9223372036854775807\nx = x + 1\n",
+               "integer overflow in '+'");
+    checkFault("subtraction past the minimum",
+               std::string(leastPrelude) + "x = least - 1\n",
+               "integer overflow in '-'");
+    checkFault("multiplication past the maximum",
+               "x = 4294967296\nx = x * x\n",
+               "integer overflow in '*'");
+
+    // The two nobody expects, and the reason this function exists rather than
+    // three checks inline. Both are the same fact — the range is asymmetric,
+    // so the most negative value has no positive counterpart — reached by two
+    // different operators.
+    checkFault("the one division that overflows",
+               std::string(leastPrelude) + "x = least / -1\n",
+               "integer overflow in '/'");
+    checkFault("negating the most negative integer",
+               std::string(leastPrelude) + "x = -least\n",
+               "integer overflow in unary '-'");
+
+    // A zero divisor is checked before the overflow, so the message a reader
+    // actually meets is still the one about zero.
+    checkFault("a zero divisor is still division by zero",
+               std::string(leastPrelude) + "x = least / 0\n",
+               "division by zero");
+
+    // The near misses. Each is one step inside the boundary its neighbour
+    // above crosses, so a check that trapped on a value that fits — a `>=`
+    // where the builtin means `>` — fails here rather than passing quietly.
+    checkRuns("the maximum itself is not an overflow",
+              "x = 9223372036854775806\nx = x + 1\n");
+    checkRuns("the minimum itself is not an overflow",
+              std::string(leastPrelude) + "x = least + 1\nx = x - 1\n");
+    checkRuns("dividing the most negative value by anything else is fine",
+              std::string(leastPrelude) + "x = least / 2\nx = least / 1\n");
+    checkRuns("dividing the maximum by -1 is fine — the range is asymmetric",
+              "x = 9223372036854775807\nx = x / -1\n");
+    checkRuns("negating anything but the minimum is fine",
+              std::string(leastPrelude) + "x = least + 1\nx = -x\n");
+
+    // Overflow is a *runtime* fault, the opposite classification from the
+    // out-of-range literal, and for the opposite reason: whether a sum fits
+    // depends on what the program computed. The exit codes are pinned in
+    // tests/diagnostic_test.cpp; this is the same split asserted where the
+    // arithmetic lives.
+    Value ignored;
+    check(evaluateExpression("9223372036854775807 + 1", ignored) ==
+              Outcome::RuntimeFault_,
+          "an overflow is a runtime fault, not a compile error");
+    check(evaluateExpression("9223372036854775808 + 1", ignored) ==
+              Outcome::CompileError_,
+          "an out-of-range literal is a compile error, not a runtime fault");
+}
+
 } // namespace
 
 int main()
@@ -456,6 +622,8 @@ int main()
     theNewTokensAndNodesCarryRealSpans();
     aNameThatStartsWithAKeywordIsAName();
     theTwoArmsDoNotMix();
+    theIntegerArmHoldsSixtyFourBits();
+    arithmeticTrapsRatherThanWrapping();
 
     if (failures != 0)
     {

@@ -232,12 +232,49 @@ void everyErrorSiteCarriesARealSpan()
          "c.algo:1:5: error: division by zero\n"
          "x = 5 / 0\n"
          "    ^~~~~\n"},
+        // ON THIS LITERAL. It was `9999999999` until item 1.5, chosen because
+        // it did not fit in the `int` the value arm used to be. It fits in an
+        // int64 comfortably, so on the day the arm widened this case stopped
+        // testing anything and would have gone on passing as a plain number —
+        // the failure mode a golden file cannot warn about. The literal is now
+        // one past the maximum exactly, which pins the boundary rather than
+        // merely clearing it, and the caret run grew with the token: it is as
+        // long as the literal, so a nineteen-digit number needs nineteen
+        // characters under it.
         {"literal out of range covers the literal",
-         "x = 9999999999\n",
+         "x = 9223372036854775808\n",
          Thrown::Compile,
-         "c.algo:1:5: error: integer literal out of range: 9999999999\n"
-         "x = 9999999999\n"
+         "c.algo:1:5: error: integer literal out of range: 9223372036854775808\n"
+         "x = 9223372036854775808\n"
+         "    ^~~~~~~~~~~~~~~~~~~\n"},
+        // Item 1.5's runtime fault, at all three of the operators whose caret
+        // geometry differs. It goes on the whole operation, which is the same
+        // convention division by zero and a type fault follow: neither operand
+        // is individually wrong, combining them is.
+        {"an overflowing addition covers the whole operation",
+         "x = 9223372036854775807\nx = x + 1\n",
+         Thrown::Runtime,
+         "c.algo:2:5: error: integer overflow in '+'\n"
+         "x = x + 1\n"
+         "    ^~~~~\n"},
+        // The most negative integer is not writable as a literal — the lexer
+        // makes a number out of digits alone, so `-9223372036854775808` is
+        // unary minus applied to an out-of-range literal — so both of the
+        // asymmetry cases below have to compute it into a name first.
+        {"the one division that overflows is not division by zero",
+         "least = 0 - 9223372036854775807\nleast = least - 1\nx = least / -1\n",
+         Thrown::Runtime,
+         "c.algo:3:5: error: integer overflow in '/'\n"
+         "x = least / -1\n"
          "    ^~~~~~~~~~\n"},
+        // Worded apart from the binary form: `-` names two operators, and a
+        // reader needs to know which one trapped.
+        {"negating the most negative integer names the unary operator",
+         "least = 0 - 9223372036854775807\nleast = least - 1\nx = -least\n",
+         Thrown::Runtime,
+         "c.algo:3:5: error: integer overflow in unary '-'\n"
+         "x = -least\n"
+         "    ^~~~~~\n"},
         // The error sites item 1.1 adds. A type fault points at the whole
         // operation, not at one operand: an operand only has the wrong type
         // relative to what is being done with it.
@@ -432,7 +469,7 @@ void theExitCodeClassificationIsPinned()
 
     const std::vector<Case> cases = {
         {"a literal too wide for the value type is a compile-time error",
-         "x = 9999999999\n", Thrown::Compile, ExitCode::CompileTime},
+         "x = 9223372036854775808\n", Thrown::Compile, ExitCode::CompileTime},
         {"division by zero is a runtime fault",
          "x = 5 / 0\n", Thrown::Runtime, ExitCode::Runtime},
         {"an unknown character is a compile-time error",
@@ -470,6 +507,23 @@ void theExitCodeClassificationIsPinned()
          "x = nope()\n", Thrown::Compile, ExitCode::CompileTime},
         {"'return' outside a function is a compile-time error",
          "return 1\n", Thrown::Compile, ExitCode::CompileTime},
+        // Item 1.5's, and it falls on the same side as the type mismatch for
+        // the same reason. Whether a sum fits in 64 bits depends on what the
+        // program computed, so it cannot be settled before the program runs.
+        // The literal one line above is its opposite and stays at 65: that one
+        // is a property of the token's text alone. The pair is the whole point
+        // — an arithmetic overflow and a literal too wide for the same range
+        // are the two errors most likely to be conflated, and they exit
+        // differently.
+        {"an arithmetic overflow is a runtime fault",
+         "x = 9223372036854775807\nx = x + 1\n",
+         Thrown::Runtime, ExitCode::Runtime},
+        {"an overflowing division is a runtime fault",
+         "least = 0 - 9223372036854775807\nleast = least - 1\nx = least / -1\n",
+         Thrown::Runtime, ExitCode::Runtime},
+        {"an overflowing negation is a runtime fault",
+         "least = 0 - 9223372036854775807\nleast = least - 1\nx = -least\n",
+         Thrown::Runtime, ExitCode::Runtime},
     };
 
     for (const Case &c : cases)

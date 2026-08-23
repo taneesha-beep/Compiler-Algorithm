@@ -1,3 +1,3 @@
-error_overflow.algo:1:7: error: integer literal out of range: 9999999999
-print 9999999999
-      ^~~~~~~~~~
+error_overflow.algo:1:7: error: integer literal out of range: 9223372036854775808
+print 9223372036854775808
+      ^~~~~~~~~~~~~~~~~~~

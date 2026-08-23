@@ -4,6 +4,28 @@ project(algo)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# Item 1.5's acceptance criterion is that the suite is clean under
+# `-fsanitize=undefined`, and a criterion that can only be met by remembering a
+# flag is a criterion nobody re-checks. Off by default and applied to nothing
+# unless asked for:
+#
+#     cmake -S . -B build-ubsan -DCMAKE_CXX_STANDARD=20 -DALGO_SANITIZE=ON
+#     cmake --build build-ubsan && ctest --test-dir build-ubsan
+#
+# It MUST stay off by default. Phase 2 measures whatever the default build
+# produces, and a sanitizer silently in that build would put its own
+# instrumentation into every number Phase 3 attributes to a cause.
+#
+# `-fno-sanitize-recover` is what makes this a test rather than a log: UBSan
+# prints and carries on by default, so an undefined operation would scroll past
+# in output nobody reads and CTest would report the case green. Aborting turns
+# it into a non-zero exit, which is all CTest looks at.
+option(ALGO_SANITIZE "Build with -fsanitize=undefined (off by default)" OFF)
+if(ALGO_SANITIZE)
+    add_compile_options(-fsanitize=undefined -fno-sanitize-recover=undefined -g)
+    add_link_options(-fsanitize=undefined)
+endif()
+
 # The front end and engines, built once and shared. `main.cpp` stays out of it
 # so that a test binary can link the same objects alongside its own main().
 add_library(algo_core STATIC

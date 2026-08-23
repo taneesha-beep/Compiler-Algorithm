@@ -1,0 +1,19 @@
+print 9223372036854775807
+print 0 - 9223372036854775807
+
+edge = 9223372036854775807
+print edge - 1
+
+least = 0 - 9223372036854775807
+print least - 1
+
+wide = 2147483647
+print wide + 1
+print wide * wide
+
+half = 4294967296
+print half * wide
+
+nearLeast = 0 - 9223372036854775807
+print nearLeast / -1
+print -nearLeast
