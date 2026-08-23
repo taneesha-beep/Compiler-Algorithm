@@ -28,6 +28,26 @@ And runs it through four stages. Standard output carries what the program printe
 12
 ```
 
+The language reaches as far as selection and iteration:
+
+```
+i = 1
+total = 0
+while i <= 100 {
+    total = total + i
+    i = i + 1
+}
+if total == 5050 {
+    print total
+} else {
+    print 0
+}
+```
+
+```
+5050
+```
+
 The stages narrate themselves only when asked. `--trace` writes that commentary to **stderr**, so `algo prog.algo > out.txt` captures the program's output alone whether the flag is on or off:
 
 ```bash
@@ -61,26 +81,57 @@ print z
 Reads raw source text character by character. Groups characters into tokens (numbers, identifiers, operators, keywords). Discards whitespace, but tracks line and column across it, so every token records the source span it came from. Appends a sentinel `END_OF_FILE` token to simplify parser bounds checking.
 
 **Stage 2 — Recursive Descent Parser**
-Converts the token stream into an Abstract Syntax Tree. Grammar rules are encoded directly as mutually recursive functions — `parseExpr()` calls `parseTerm()` which calls `parsePrimary()` — enforcing operator precedence through the call hierarchy rather than a lookup table.
+Converts the token stream into an Abstract Syntax Tree. Grammar rules are encoded directly as mutually recursive functions, one per precedence level, enforcing operator precedence through the call hierarchy rather than a lookup table:
+
+```
+equality → comparison → term → factor → unary → primary
+   ==        <  <=        +       *       -       1
+   !=        >  >=        -       /       !       x
+                                                  true
+```
+
+Each level parses the level below it and then loops on its own operators, so the level that runs last binds loosest. Every node the parser builds is its own struct with named fields — a `BinOpNode` has `left` and `right`, an `IfNode` has a condition and two branches, a `BlockNode` has a statement list — reached through a tag check that hands back the concrete type.
 
 **Stage 3 — Semantic Analysis**
 Walks the AST before execution to catch use-before-assignment errors. Points a caret at the *use*, not at the missing assignment — the offending node is the identifier itself.
 
 **Stage 4 — Tree-Walk Interpreter**
-Recursively evaluates the AST. Maintains a `std::map` as the variable environment. Executes `print` statements by evaluating the expression subtree and writing to stdout.
+Recursively evaluates the AST. Maintains a `std::map` as the variable environment. Executes `print` statements by evaluating the expression subtree and writing to stdout. Values are a tagged union of an integer and a boolean — there is no implicit conversion between them, so an integer is not truthy and a boolean is not 0 or 1.
 
 ---
 
 ## Language Reference
 
-| Feature       | Syntax            |
-| ------------- | ----------------- |
-| Assignment    | `x = 5`           |
-| Arithmetic    | `y = x + 3 * 2`   |
-| Print         | `print z`         |
-| Operators     | `+` `-` `*` `/`   |
+| Feature       | Syntax                                  |
+| ------------- | --------------------------------------- |
+| Assignment    | `x = 5`                                 |
+| Arithmetic    | `y = x + 3 * 2`                         |
+| Comparison    | `x < 10`, `n == 0`, `a != b`            |
+| Booleans      | `true`, `false`, `!done`                |
+| Unary minus   | `x = -5`                                |
+| Print         | `print z`                               |
+| Block         | `{ x = 1 x = x + 1 }`                   |
+| Selection     | `if x < 5 { … } else if … { … } else { … }` |
+| Iteration     | `while i <= 100 { … }`                  |
+| Operators     | `+` `-` `*` `/` `==` `!=` `<` `<=` `>` `>=` `!` unary `-` |
 
-Operator precedence is correct — `*` and `/` bind tighter than `+` and `-`.
+Precedence runs `equality → comparison → term → factor → unary → primary`, loosest first, so `1 + 2 * 3 == 7` is `((1 + (2 * 3)) == 7)` and prints `true`. Prefix operators are right-associative and stack: `- -5` is `5` and `!!true` is `true`.
+
+Conditions are **not parenthesised** and braces are **mandatory** — `if x < 1 { … }`, never `if (x < 1) …`. The language has no grouping parentheses at all, so a `(` that worked only in a condition would read as an oversight rather than a rule; mandatory braces also settle the dangling `else` outright.
+
+Types do not mix. Arithmetic and ordering take two integers, `==` and `!=` take two operands of the same type, `!` takes a boolean and unary `-` an integer, and a condition must be a boolean. Anything else is a runtime fault, because the language has no type checker — whether `x + 1` is well typed depends on what the program computed.
+
+```
+i = 1
+total = 0
+while i <= 100 {
+    total = total + i
+    i = i + 1
+}
+print total          # 5050
+```
+
+A block does not yet introduce a scope: a variable assigned inside one is the same variable outside it. Scoping and shadowing arrive with the resolver.
 
 ---
 
@@ -104,30 +155,46 @@ The span comes from the stage that raised the error; the path and source text co
 | Use before assignment | `print z` (no prior assign) | `variable 'z' used before assignment`          | 65   |
 | Literal out of range  | `print 9999999999`          | `integer literal out of range: 9999999999`     | 65   |
 | Division by zero      | `x = 5 / 0`                 | `division by zero`                             | 70   |
+| Type mismatch         | `print true + 1`            | `operator '+' cannot be applied to boolean and integer` | 70 |
+| Non-boolean condition | `while 1 { … }`             | `a condition must be a boolean, not integer`   | 70   |
+| Unclosed block        | `if true { print 1`         | `expected '}' to close this block`             | 65   |
 | Missing argument      | `./algo`                    | `no input file`                                | 64   |
 | File not found        | `./algo missing.algo`       | `could not open file: missing.algo`            | 66   |
 
 Exit codes are sysexits-style: `0` success, `64` bad command line, `65` compile-time error, `66` unreadable input file, `70` runtime fault.
 
-A literal too wide for the value type is classed **compile-time**, not runtime, even though it is currently detected during evaluation — it is a property of the token's text, not of anything the program computes.
+A literal too wide for the value type is classed **compile-time**, not runtime, even though it is currently detected during evaluation — it is a property of the token's text, not of anything the program computes. A type mismatch is classed the opposite way for the same reason read in reverse: with no type checker in the language, whether an operand has the right type depends on what the program computed, so it is a runtime fault.
 
 ---
 
 ## Testing & CI
 
-The suite is seven CTest cases: five golden-file cases and two unit tests.
+The suite is nineteen CTest cases: sixteen golden-file cases and three unit tests.
 
 Golden-file cases live in `tests/`, each a `.algo` input paired with the output it should produce:
 
-| Case               | Covers                                      |
-| ------------------ | -------------------------------------------- |
-| `basic`             | End-to-end run through all four stages        |
-| `precedence`        | `*`/`/` binding tighter than `+`/`-`          |
-| `error_div_zero`    | Runtime error: division by zero               |
-| `error_overflow`    | Runtime error: integer literal overflow       |
-| `error_undef`       | Semantic error: variable used before assignment |
+| Case                     | Covers                                          |
+| ------------------------ | ----------------------------------------------- |
+| `basic`                  | End-to-end run through all four stages           |
+| `precedence`             | `*`/`/` binding tighter than `+`/`-`             |
+| `precedence_equality`    | Equality binding looser than comparison          |
+| `precedence_comparison`  | Comparison binding looser than `+`/`-`           |
+| `precedence_unary`       | Prefix operators binding tighter than `*`, and stacking |
+| `comparisons`            | All six comparison operators                     |
+| `booleans`               | `true`/`false`, `!`, and printing a boolean      |
+| `blocks`                 | Nested blocks, and statements running in order   |
+| `if_else_chain`          | `if` / `else if` / `else` selecting correctly    |
+| `while_sum`              | A `while` loop summing 1..100                    |
+| `while_never_runs`       | A `while` testing before it runs its body        |
+| `error_div_zero`         | Runtime error: division by zero                  |
+| `error_overflow`         | Runtime error: integer literal overflow          |
+| `error_undef`            | Semantic error: variable used before assignment  |
+| `error_type_mismatch`    | Runtime error: an operator applied across types  |
+| `error_condition_type`   | Runtime error: a condition that is not a boolean |
 
-Four of the five carry all three golden files; `precedence` deliberately carries only `.expected`, so the optional-comparison path stays exercised.
+All but one carry all three golden files; `precedence` deliberately carries only `.expected`, so the optional-comparison path stays exercised.
+
+Each case carries a **ten-second CTest timeout**. `while` makes a non-terminating program expressible, and a case that hangs would otherwise stall CI until the job's own limit — a failure that reads as an infrastructure problem rather than as the bug it is. The guard sits here rather than in the interpreter on purpose: an iteration cap would be a branch inside the hot path of every benchmark, and a language semantic that was never asked for.
 
 A case compares up to three things. `<case>.expected` is stdout and is required. `<case>.expected_err` is stderr and `<case>.expected_code` is the process exit code; both are optional, and an absent file means *do not check* rather than *expect empty* — so a case that does not care what it exits with simply omits the file.
 
@@ -141,6 +208,9 @@ Golden-file cases compare streams, so they cannot assert a value that never reac
 | --------------------------- | ------------------------------------------------------------- |
 | `tests/span_test.cpp`       | The line, column and length the lexer and parser attach to every token and AST node |
 | `tests/diagnostic_test.cpp` | The rendered form of a diagnostic — caret geometry, tab alignment, and which error class each site raises |
+| `tests/expression_test.cpp` | The value type, and the precedence facts no printed output can show |
+
+The last of those exists because some claims cannot reach a stream. `-2 * 3` and `-(2 * 3)` agree on the answer — negation distributes through multiplication — so only an assertion on the tree can say which one the parser built. The same goes for the value type, which is an in-memory representation the interpreter never shows.
 
 Run the suite locally:
 
@@ -215,7 +285,8 @@ algo/
 │   ├── token.h                          # Token and source-span definitions
 │   ├── diagnostic.h / diagnostic.cpp    # Diagnostic type, renderer, error classes, exit codes
 │   ├── lexer.h / lexer.cpp              # Stage 1: source text → token stream
-│   ├── ast.h                            # AST node definitions
+│   ├── ast.h                            # AST node definitions — one struct per node type
+│   ├── value.h                          # The runtime value type: a tagged integer or boolean
 │   ├── parser.h / parser.cpp            # Stage 2: token stream → AST
 │   ├── semantic.h / semantic.cpp        # Stage 3: use-before-assignment checks
 │   └── interpreter.h / interpreter.cpp  # Stage 4: tree-walk evaluation
@@ -226,5 +297,6 @@ algo/
     ├── *.expected_code                  # Expected exit code (optional)
     ├── span_test.cpp                    # Unit test: source spans on tokens and AST nodes
     ├── diagnostic_test.cpp              # Unit test: diagnostic rendering and error classification
+    ├── expression_test.cpp              # Unit test: the value type and the precedence cascade
     └── run_case.cmake                   # CTest driver script that runs a case and compares it
 ```
