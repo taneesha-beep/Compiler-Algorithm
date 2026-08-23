@@ -119,7 +119,7 @@ A frame is a boundary, not just a counter. Lookup searches the current frame and
 Nothing reads those slots yet, deliberately. The interpreter goes on looking each name up by string in a `std::map`, and replacing that map with an array indexed by slot is a later, separately measured change — so the resolver's output waits for the commit that spends it.
 
 **Stage 4 — Tree-Walk Interpreter**
-Recursively evaluates the AST. Maintains one `std::map` as the variable environment **per call**, on a stack of them — recursion needs two live copies of a parameter at once, and one flat map has room for one. Executes `print` statements by evaluating the expression subtree and writing to stdout. Values are a tagged union of an integer and a boolean — there is no implicit conversion between them, so an integer is not truthy and a boolean is not 0 or 1.
+Recursively evaluates the AST. Maintains one `std::map` as the variable environment **per call**, on a stack of them — recursion needs two live copies of a parameter at once, and one flat map has room for one. Executes `print` statements by evaluating the expression subtree and writing to stdout. Values are a tagged union of a 64-bit integer and a boolean — there is no implicit conversion between them, so an integer is not truthy and a boolean is not 0 or 1.
 
 A `return` unwinds as a flag reported up the statement walk rather than as an exception: `fib(27)` returns several hundred thousand times, and an exception per return would cost more than everything this project later sets out to optimise away. Recursion is bounded by a **call-depth limit** of 1000, which raises a diagnostic where the C++ stack would otherwise overflow and kill the process on a signal.
 
@@ -148,6 +148,8 @@ Precedence runs `equality → comparison → term → factor → unary → prima
 Conditions are **not parenthesised** and braces are **mandatory** — `if x < 1 { … }`, never `if (x < 1) …`. The language has **no grouping parentheses**: `(1 + 2) * 3` does not parse. The only `(` it has is the one that opens a call's argument list or a function's parameter list, and the rule covering both holds everywhere — **a `(` follows a name and delimits an argument or parameter list, and never groups an expression.** An expression's shape is fixed by the precedence cascade instead, so a program that wants `(a + b) * c` names the sum first. Mandatory braces also settle the dangling `else` outright.
 
 Types do not mix. Arithmetic and ordering take two integers, `==` and `!=` take two operands of the same type, `!` takes a boolean and unary `-` an integer, and a condition must be a boolean. Anything else is a runtime fault, because the language has no type checker — whether `x + 1` is well typed depends on what the program computed.
+
+An integer is a signed **64-bit** value, and arithmetic **traps rather than wrapping**: `+`, `-`, `*`, `/` and unary `-` each raise a runtime fault when the result will not fit. Signed overflow is undefined behaviour in C++, and this language exists to be measured — a benchmark whose arithmetic silently wraps is reporting a number produced by a program whose meaning the standard does not define. Two of the five trap sites are easy to miss: `/` and unary `-` overflow on exactly one input each, because the range is asymmetric and the smallest integer has no positive counterpart. That same asymmetry means the smallest integer **cannot be written as a literal** — `-9223372036854775808` is unary minus applied to a literal that is itself out of range — so a program that wants it computes it. The full rules are in [`docs/GRAMMAR.md`](docs/GRAMMAR.md).
 
 The language has **no comment syntax**, so every listing below is source exactly as it can be run, with its output shown beneath it.
 
@@ -274,8 +276,9 @@ The span comes from the stage that raised the error; the path and source text co
 | Unknown character     | `x = 5 @ 3`                 | `unknown character '@'`                        | 65   |
 | Syntax error          | `x 5`                       | `expected '=' after variable name`             | 65   |
 | Use before assignment | `print z` (no prior assign) | `variable 'z' used before assignment`          | 65   |
-| Literal out of range  | `print 9999999999`          | `integer literal out of range: 9999999999`     | 65   |
+| Literal out of range  | `print 9223372036854775808` | `integer literal out of range: 9223372036854775808` | 65 |
 | Division by zero      | `x = 5 / 0`                 | `division by zero`                             | 70   |
+| Arithmetic overflow   | `print 9223372036854775807 + 1` | `integer overflow in '+'`                  | 70   |
 | Type mismatch         | `print true + 1`            | `operator '+' cannot be applied to boolean and integer` | 70 |
 | Non-boolean condition | `while 1 { … }`             | `a condition must be a boolean, not integer`   | 70   |
 | Unclosed block        | `if true { print 1`         | `expected '}' to close this block`             | 65   |
@@ -302,7 +305,7 @@ The two call errors fall on the same line for the same reason. An argument count
 
 ## Testing & CI
 
-The suite is thirty CTest cases: twenty-six golden-file cases and four unit tests.
+The suite is thirty-two CTest cases: twenty-eight golden-file cases and four unit tests.
 
 Golden-file cases live in `tests/`, each a `.algo` input paired with the output it should produce:
 
@@ -365,6 +368,13 @@ cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+The same suite runs under UndefinedBehaviorSanitizer, which is what says the overflow traps fire *before* the undefined operation rather than after it. Off by default, and deliberately so — a sanitizer in the default build would put its own instrumentation into every number the benchmarks report:
+
+```bash
+cmake -S . -B build-ubsan -DALGO_SANITIZE=ON && cmake --build build-ubsan
+ctest --test-dir build-ubsan --output-on-failure
+```
+
 CI (`.github/workflows/ci.yml`) builds and runs the full test suite on every push and pull request, across a matrix of GCC and Clang on Ubuntu.
 
 ---
@@ -424,6 +434,8 @@ algo/
 ├── CMakeLists.txt                       # algo_core library, algo driver, CTest registration
 ├── LICENSE
 ├── README.md
+├── docs/
+│   └── GRAMMAR.md                       # Language reference — integer range and overflow rules
 ├── examples/
 │   ├── program.algo                     # Sample program
 │   └── fib.algo                         # fib(27) — Phase 1's acceptance criterion
@@ -433,7 +445,7 @@ algo/
 │   ├── diagnostic.h / diagnostic.cpp    # Diagnostic type, renderer, error classes, exit codes
 │   ├── lexer.h / lexer.cpp              # Stage 1: source text → token stream
 │   ├── ast.h                            # AST node definitions — one struct per node type
-│   ├── value.h                          # The runtime value type: a tagged integer or boolean
+│   ├── value.h                          # The runtime value type: a tagged 64-bit integer or boolean
 │   ├── parser.h / parser.cpp            # Stage 2: token stream → AST
 │   ├── resolver.h / resolver.cpp        # Stage 3: frames, scopes, calls, and a slot per variable
 │   └── interpreter.h / interpreter.cpp  # Stage 4: tree-walk evaluation
