@@ -28,6 +28,8 @@ it — a reader has to know it.
 | **Wall clock** | `wall_median_ms`, `wall_min_ms` | **Narrative only.** Measured inside a virtualised container on a machine whose CPU the guest cannot even name. Says whether a change is perceptible; decides nothing. **Nothing may gate CI on these.** |
 | **`perf`** | `perf_cycles`, `perf_instructions`, `perf_ipc` | **Empty on this platform** and expected to stay that way. `linux-tools` is built for kernel 6.8; Docker Desktop runs LinuxKit 6.12.68, so `perf` exits 2. Hardware counts are machine-specific and are never committed as thresholds even where they do work. |
 
+**The code that would fill those three columns has never executed.** `perf` has never worked here, so the branch in `scripts/bench.sh` that collects it is written but unverified. It fails safe — a value that is not a plain integer leaves the field empty rather than being recorded — but if a future platform makes `perf` work, **check that branch against a known-good `perf` run before trusting a number it produces.**
+
 ## Rows are comparable only within a platform — and only within a driver
 
 The last five columns (`arch`, `kernel`, `compiler`, `valgrind`, `image_digest`)
@@ -86,7 +88,7 @@ readable with a bare `awk -F,`. That is deliberate: the bench image has no
 | `output` | what the program printed — a wrong answer is visible in the row rather than hidden behind exit 0 |
 | `Ir` `I1mr` `ILmr` `Dr` `D1mr` `DLmr` `Dw` `D1mw` `DLmw` `Bc` `Bcm` `Bi` `Bim` | cachegrind's thirteen raw events, in its own names |
 | `D1_misses` `LL_misses` `branches` `mispredicts` | the four totals the roadmap names, derived exactly as cachegrind's own summary derives them |
-| `wall_runs` `wall_median_ms` `wall_min_ms` | wall clock over `wall_runs` runs — narrative only |
+| `wall_runs` `wall_median_ms` `wall_min_ms` | wall clock over `wall_runs` runs — narrative only. For an even number of runs the median is the mean of the two middle values, rounded; the convention is stated because the column is named for it, and it decides nothing |
 | `perf_cycles` `perf_instructions` `perf_ipc` | empty on this platform |
 | `arch` `kernel` `compiler` `valgrind` `image_digest` | the platform the row was taken on |
 
