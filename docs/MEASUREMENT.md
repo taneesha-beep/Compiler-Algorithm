@@ -197,8 +197,10 @@ Two smaller choices inside that:
 - **`-O2`, not `-O3`.** `-O3`'s extra unrolling and vectorisation do little for
   an interpreter dispatch loop and make counts more sensitive to the compiler
   version, which is a reproducibility cost for no analytical gain.
-- **`-g` is kept.** It does not change generated code, and Phase 3 will want
-  `cg_annotate` to attribute instructions to source lines — which needs symbols.
+- **`-g` is kept.** It does not change generated code, and attributing
+  instructions to source lines needs symbols. Item 2.2 has since done exactly
+  that and confirmed the flag earns its place — but **not** via `cg_annotate`,
+  which does not run in this image; see below.
 
 Three consequences to keep in view:
 
@@ -238,6 +240,38 @@ No `linux-tools-6.12.68-linuxkit` package exists, and a guest would not be given
 for exactly this reason, so this blocks nothing: it removes the wall-clock
 narrative's hardware counters, not the attribution. Every number the attribution
 rests on is simulated and therefore still available.
+
+### `cg_annotate` does not run here either — read the out-file directly
+
+Valgrind 3.22 ships `cg_annotate` as a Python script and this image installs no
+`python3`, so it exits immediately:
+
+```
+/usr/bin/env: 'python3': No such file or directory
+```
+
+**This costs nothing, because the tool is a presenter rather than an
+instrument.** Cachegrind writes everything it knows to the path given by
+`--cachegrind-out-file`, in a documented plain-text format: a header naming the
+event order, then `fl=` / `fn=` records and one line of counts per source line.
+
+```
+events: Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim
+```
+
+Item 2.2 needed per-function and per-line attribution to establish what
+`bench/vars.algo` actually spends its instructions on, and got it by parsing
+that file — which is also what confirms `-g` is pulling its weight, since the
+`fl=` and `fn=` records come from the debug information. Note the default
+command passes `--cachegrind-out-file=/dev/null`, so any run wanting attribution
+must give it a real path.
+
+**Adding `python3` to `Dockerfile.bench` was deliberately not done.** The image
+is item 2.1's deliverable, and changing it inside a later item would mix two
+items in one commit — the exact coupling the one-item-one-commit rule exists to
+prevent, and the thing that makes a configuration non-isolable by tag. If a
+Phase 3 item wants `cg_annotate` routinely, it should add it as its own change
+and re-record the package versions in the table above.
 
 ## Running it
 
@@ -300,3 +334,25 @@ Two entries already belong here and are recorded now so they are not lost:
   interaction residual is itself about. The reasoning is in the 1.5 entry of the
   roadmap's *Decisions and deviations* and above `binaryOverflowFault` in
   `src/interpreter.cpp`.
+- **Ablation D's figure will be a property of a 20-name frame, not of the
+  language.** Left by item 2.2. What ablation D removes — a `std::map` keyed on
+  `std::string`, replaced by a slot-indexed vector — costs more the deeper the
+  map is and the more expensive its key comparison, which is to say it scales
+  with *how many variables the measured program declares*. `bench/vars.algo` is
+  the program that will attribute D, and it declares 20. That number is a design
+  choice, not a property of Algo, and a program declaring two would report a
+  much smaller D while measuring the same interpreter.
+
+  The size of the effect is already visible. Against a control identical in node
+  count, operator mix and literal count but holding **5** names rather than 20,
+  the larger frame alone accounts for **2,882,108,629 instructions — 22.4% of
+  `bench/vars.algo`'s mix — and 99.8% of its D1 misses** (10,021,413 against
+  20,688). Map machinery plus string-key comparison is somewhere between **23%
+  and 56%** of its instructions; the spread is only how much of `bcmp` serves map
+  keys rather than the operator-dispatch chain, and ablation D is itself the
+  instrument that resolves it.
+
+  So D's number is reportable as measured, but **must be reported as "on a
+  20-name frame"** rather than as what the environment costs in general. The
+  names are also short (`v01`…`v16`), which understates the effect rather than
+  inflating it, since longer keys cost more per comparison.
