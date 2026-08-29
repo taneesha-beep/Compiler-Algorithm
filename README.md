@@ -379,11 +379,29 @@ CI (`.github/workflows/ci.yml`) builds and runs the full test suite on every pus
 
 ---
 
+## Measurement
+
+Performance numbers are produced by `valgrind --tool=cachegrind`, which *simulates* a machine rather than timing this one — so its counts are deterministic and reproduce exactly across runs, which is what makes them safe to commit and to compare across versions of the interpreter.
+
+Valgrind does not meaningfully support arm64 macOS, so on Apple Silicon there is no measurement outside a Linux container. That is not a packaging convenience; it is the only place the instrument runs:
+
+```bash
+docker compose run --rm bench
+```
+
+That builds the interpreter at `-O2` into `build-bench/` and runs cachegrind over `examples/fib.algo`. `Dockerfile.bench` pins its Ubuntu image **by digest rather than by tag**, because the tag is rebuilt whenever a base package changes, and a number measured against a moving base is not reproducible.
+
+Two decisions behind those numbers are recorded in [`docs/MEASUREMENT.md`](docs/MEASUREMENT.md) along with the image digest, the CPU and the compiler version. Both were settled by measurement rather than assumption: cachegrind runs **native arm64** — emulating x86_64 works but makes the counts *less* portable, because valgrind then auto-detects a host-derived cache model instead of using its own fixed defaults. And benchmarks build at **`-O2`**, not the unoptimised default the test build uses: `-O0` charges the interpreter 6.26x the instructions a real build executes, which would inflate every later comparison by optimisation the compiler simply declined to attempt.
+
+---
+
 ## Tech Stack
 
 - **Language:** C++20
 - **Build System:** CMake 3.20+
 - **Compiler:** AppleClang (macOS) / GCC or Clang (Linux)
+- **Measurement:** valgrind/cachegrind, inside a digest-pinned Ubuntu container
+- **Dependencies:** none — no third-party libraries, and no test framework
 
 ---
 
@@ -434,8 +452,11 @@ algo/
 ├── CMakeLists.txt                       # algo_core library, algo driver, CTest registration
 ├── LICENSE
 ├── README.md
+├── Dockerfile.bench                     # Measurement platform — Ubuntu pinned by digest, cachegrind
+├── compose.yaml                         # The `bench` service; mounts the repo, runs cachegrind
 ├── docs/
-│   └── GRAMMAR.md                       # Language reference — integer range and overflow rules
+│   ├── GRAMMAR.md                       # Language reference — integer range and overflow rules
+│   └── MEASUREMENT.md                   # Image digest, CPU, compiler, and why -O2 and native arm64
 ├── examples/
 │   ├── program.algo                     # Sample program
 │   └── fib.algo                         # fib(27) — Phase 1's acceptance criterion
