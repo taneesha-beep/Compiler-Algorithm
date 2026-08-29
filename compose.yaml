@@ -1,0 +1,38 @@
+# The measurement platform's entry point:
+#
+#     docker compose run --rm bench
+#
+# Valgrind does not meaningfully support arm64 macOS, so on an Apple Silicon
+# machine every number in this project has to be produced inside this service.
+# That is not a convenience — it is the only place cachegrind runs at all.
+
+services:
+  bench:
+    build:
+      context: .
+      dockerfile: Dockerfile.bench
+    image: algo-bench:24.04
+
+    # The repository is mounted rather than copied so that a measurement always
+    # reflects the working tree as it is right now. Copying would put a stale
+    # snapshot inside the image and silently measure the wrong commit — the
+    # exact failure Phase 2 exists to prevent.
+    volumes:
+      - .:/repo
+    working_dir: /repo
+
+    # No `platform:` key, deliberately. This machine is arm64 and cachegrind is
+    # fully supported on arm64 Linux, so the service runs native. Forcing
+    # linux/amd64 would work — Rosetta emulates it — but it would be strictly
+    # worse: it inserts a translation layer underneath the thing being measured,
+    # and it lets valgrind auto-detect a host-derived cache model instead of
+    # using its own fixed defaults, which makes the counts *less* portable
+    # rather than more. Both effects are measured and recorded in
+    # docs/MEASUREMENT.md.
+
+    # Cachegrind slows execution by roughly two orders of magnitude, and
+    # examples/fib.algo is a real workload. A container that dies to an
+    # unrelated timeout mid-measurement produces a partial count, which is worse
+    # than no count.
+    stdin_open: false
+    tty: false

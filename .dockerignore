@@ -1,0 +1,11 @@
+# The bench image installs tools and nothing else — it never COPYs the
+# repository, because compose bind-mounts it at run time instead. So this file
+# exists purely to keep the build context small: without it Docker uploads
+# every object file in build/ and build-ubsan/ on each image build, for an
+# image that does not want a single one of them.
+build/
+build-*/
+.git/
+.vs/
+.idea/
+.DS_Store

@@ -1,0 +1,58 @@
+# The measurement platform. See docs/MEASUREMENT.md for the recorded properties
+# of this image and why each decision below was made.
+#
+# PINNED BY DIGEST, NOT BY TAG. `ubuntu:24.04` is a moving target — it is
+# rebuilt whenever a base package changes — and a number measured against a
+# moving base is not reproducible. This digest is the multi-arch OCI *index*
+# digest, so the same line resolves to the arm64 manifest here and to the amd64
+# one on a CI runner while still naming exact content on both.
+#
+# Read back from the daemon after pulling, never copied from anywhere else:
+#     docker pull ubuntu:24.04
+#     docker image inspect ubuntu:24.04 --format '{{json .RepoDigests}}'
+FROM ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+
+# `linux-tools-generic` is installed for `perf`, which the roadmap asks for, but
+# perf is expected NOT to work here and that is recorded rather than worked
+# around: perf reads hardware counters through the host kernel, and this
+# container runs on Docker Desktop's virtual machine, whose kernel neither
+# matches the packaged tools nor exposes perf_event to a guest. Item 2.3 treats
+# perf as optional for exactly this reason. Cachegrind does not care — it
+# simulates rather than counts, which is what makes it the instrument the
+# committed numbers come from.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        valgrind \
+        linux-tools-common \
+        linux-tools-generic \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+
+# The default command IS item 2.1's acceptance criterion, kept inline on
+# purpose: `scripts/bench.sh` belongs to item 2.3 and will supersede this.
+#
+# Three things this command pins deliberately, all argued in docs/MEASUREMENT.md:
+#
+#   * -DCMAKE_BUILD_TYPE=RelWithDebInfo (-O2 -g -DNDEBUG). Nothing in
+#     CMakeLists.txt sets a build type, so an unset one measures -O0 — a level
+#     no interpreter is ever run at, and one that inflates every ablation delta
+#     by charging it for optimisations the compiler simply did not attempt.
+#   * A build directory of its own. The repository is bind-mounted, so building
+#     into `build/` would overwrite the host's AppleClang objects with Linux GCC
+#     ones and leave neither tree usable. `build-*/` is already gitignored.
+#   * ALGO_SANITIZE is not passed and so stays OFF, which the build echoes below
+#     rather than merely assuming.
+CMD ["bash", "-c", "set -e; \
+cmake -S . -B build-bench -DCMAKE_CXX_STANDARD=20 -DCMAKE_BUILD_TYPE=RelWithDebInfo > /dev/null; \
+cmake --build build-bench -j > /dev/null; \
+echo '--- platform ---'; \
+grep -m1 'model name\\|Model name' /proc/cpuinfo 2>/dev/null || lscpu | grep -m1 'Model name' || echo 'CPU model: not reported by this kernel'; \
+c++ --version | head -1; \
+valgrind --version; \
+echo -n 'ALGO_SANITIZE='; cmake -L build-bench 2>/dev/null | grep ALGO_SANITIZE; \
+echo -n 'CMAKE_BUILD_TYPE='; cmake -L build-bench 2>/dev/null | grep CMAKE_BUILD_TYPE; \
+echo '--- cachegrind: examples/fib.algo ---'; \
+valgrind --tool=cachegrind --cache-sim=yes --branch-sim=yes --cachegrind-out-file=/dev/null \
+    ./build-bench/algo examples/fib.algo"]
