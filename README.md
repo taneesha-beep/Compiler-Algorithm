@@ -391,6 +391,22 @@ docker compose run --rm bench
 
 That builds the interpreter at `-O2` into `build-bench/` and runs cachegrind over `examples/fib.algo`. `Dockerfile.bench` pins its Ubuntu image **by digest rather than by tag**, because the tag is rebuilt whenever a base package changes, and a number measured against a moving base is not reproducible.
 
+### The measurement driver
+
+`scripts/bench.sh` measures one binary running one program and appends one row to `results/measurements.csv`:
+
+```bash
+docker compose run --rm bench bash scripts/bench.sh build-bench/algo bench/fib32.algo --config baseline
+```
+
+The row carries cachegrind's thirteen raw events and the four totals derived from them, wall clock over ten runs, what the program printed, and the provenance needed to place the row later — commit, build type, architecture, kernel, compiler, valgrind version and image digest. **Every number anywhere in this repository traces to a row in that file.**
+
+The script **refuses to run outside the container**, and **refuses to measure an unoptimised build**. Both refusals exist for the same reason: the worst outcome available to a project like this is not a missing number, it is a plausible-looking wrong one. There is no cachegrind on arm64 macOS, and the default build is unoptimised — a host run that appeared to work would produce a row identical in shape to a real one and wrong by the whole distance between an optimised build and an unoptimised one. Each refusal was checked against a build that would otherwise have produced a number, rather than assumed.
+
+Not all of the row is equally trustworthy, and [`results/README.md`](results/README.md) says so explicitly. The cachegrind counts are simulated and deterministic, and they are what may be committed as a threshold. The wall-clock columns are narrative — they are taken inside a virtualised container on a machine whose CPU the guest cannot even name — and nothing gates on them. The `perf` columns are empty here and expected to stay that way: the packaged tools are built for a different kernel than Docker Desktop runs, which is recorded rather than worked around.
+
+Validating the driver turned up one result worth stating: **the instruction count is invocation-independent and the cache counts are not.** Measuring the same binary on the same program, the instruction count barely moves however the process is launched, while the D1 miss count of the variable-access benchmark settles on one of two well-separated values — the environment block shifts the initial process layout, and a working set that straddles a cache line lands on one side of it or the other. Each invocation style then reproduces exactly; different styles do not agree with each other. That is precisely why measurements go through one driver rather than being typed at a prompt, and it is why the attribution this project is building rests on instruction counts. The figures are in [`results/README.md`](results/README.md), beside the rows they came from.
+
 ### The benchmark programs
 
 `bench/` holds four programs, each written to load a different part of the interpreter so that later comparisons have something to separate rather than one blended number:
@@ -478,6 +494,11 @@ algo/
 │   ├── loop10m.algo                     # Dispatch — ten million iterations, minimal body
 │   ├── arith.algo                       # Expression-tree traversal and operand traffic
 │   └── vars.algo                        # Variable access — every loop leaf is a variable read
+├── scripts/
+│   └── bench.sh                         # The measurement driver — one binary, one program, one row
+├── results/
+│   ├── README.md                        # Schema, and which columns may be committed as thresholds
+│   └── measurements.csv                 # The ledger — every committed number traces to a row here
 ├── docs/
 │   ├── GRAMMAR.md                       # Language reference — integer range and overflow rules
 │   └── MEASUREMENT.md                   # Image digest, CPU, compiler, and why -O2 and native arm64

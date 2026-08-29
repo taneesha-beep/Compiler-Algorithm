@@ -281,7 +281,27 @@ docker compose run --rm bench
 
 That configures `build-bench/`, builds it, echoes the platform, and runs
 cachegrind over `examples/fib.algo`. It is deliberately inline in
-`Dockerfile.bench`: `scripts/bench.sh` is item **2.3**'s and will supersede it.
+`Dockerfile.bench`, and it remains item 2.1's acceptance criterion — a
+self-contained check that the platform works at all.
+
+**Item 2.3's `scripts/bench.sh` has since superseded it for measurement.** The
+inline command prints a summary and keeps nothing; the driver writes a row:
+
+```bash
+docker compose run --rm bench bash scripts/bench.sh build-bench/algo bench/fib32.algo --config baseline
+```
+
+It refuses to run off Linux and refuses a build whose `CMAKE_BUILD_TYPE` is
+unoptimised, and it records the platform in every row so a mismatch with the
+table above is visible in the data. `results/README.md` documents the schema and
+which columns may be committed as thresholds. **Every number in this repository
+traces to a row in `results/measurements.csv`.**
+
+Two facts about this image that item 2.3 established and a later item will need:
+**`git` is not installed** — so `git worktree add` cannot run inside the
+container, and the driver reads `.git` directly rather than shelling out — and
+**neither is `jq`**, which together with the absent `python3` is why the result
+ledger is CSV parsed with `awk`.
 
 The Docker daemon must be running — on this machine it is not started at login,
 and `docker info` failing with a missing socket means `open -a Docker` and about
@@ -334,6 +354,32 @@ Two entries already belong here and are recorded now so they are not lost:
   interaction residual is itself about. The reasoning is in the 1.5 entry of the
   roadmap's *Decisions and deviations* and above `binaryOverflowFault` in
   `src/interpreter.cpp`.
+- **The cache counts depend on how the process was launched; the instruction
+  count does not.** Left by item 2.3, found while validating the driver. Same
+  binary, same commit, same container, `bench/vars.algo`: launched directly from
+  the shell it reports **10,021,412** D1 misses; launched through an intervening
+  `env`, or through `scripts/bench.sh`, it reports **6,021,415–6,021,416**. `Ir`
+  across those same runs spans **448 counts** — 12,854,818,629 at the low end and
+  12,854,819,077 at the high, or 0.0000035% of the total, which is process
+  startup and nothing else. The two D1 values differ by exactly
+  **4,000,000**, four per iteration of a 1,000,000-iteration loop.
+
+  The discriminator is the **environment block**, which shifts the initial
+  process layout: adding a whole variable flips the count, adding one or two
+  bytes to an existing variable does not, and `argv[0]`'s length does not matter.
+  Each invocation style then reproduces exactly — the instrument is
+  deterministic, as the section above records; what varies is the process it is
+  handed.
+
+  Two consequences. **The cache and branch figures are comparable only across
+  rows produced by the same driver**, which is the strongest single argument for
+  `scripts/bench.sh` existing: it fixes the invocation. A count taken by hand at
+  a shell prompt measures something real but must never be quoted beside a
+  committed row. And **the attribution rests on `Ir`, which does not move** —
+  this is a second, independent reason the cache figures are reported as
+  properties of a model rather than facts about silicon, the first being
+  valgrind's default cache hierarchy.
+
 - **Ablation D's figure will be a property of a 20-name frame, not of the
   language.** Left by item 2.2. What ablation D removes — a `std::map` keyed on
   `std::string`, replaced by a slot-indexed vector — costs more the deeper the
@@ -347,7 +393,11 @@ Two entries already belong here and are recorded now so they are not lost:
   count, operator mix and literal count but holding **5** names rather than 20,
   the larger frame alone accounts for **2,882,108,629 instructions — 22.4% of
   `bench/vars.algo`'s mix — and 99.8% of its D1 misses** (10,021,413 against
-  20,688). Map machinery plus string-key comparison is somewhere between **23%
+  20,688). **Those D1 figures predate `scripts/bench.sh` and were taken by hand,
+  so they are not comparable to the committed rows**, which report 6,021,416 for
+  the same binary and program — see the invocation-sensitivity entry below. The
+  instruction figure is unaffected, and the ratios above used one methodology
+  throughout, so they stand as stated. Map machinery plus string-key comparison is somewhere between **23%
   and 56%** of its instructions; the spread is only how much of `bcmp` serves map
   keys rather than the operator-dispatch chain, and ablation D is itself the
   instrument that resolves it.
