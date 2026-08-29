@@ -391,6 +391,25 @@ docker compose run --rm bench
 
 That builds the interpreter at `-O2` into `build-bench/` and runs cachegrind over `examples/fib.algo`. `Dockerfile.bench` pins its Ubuntu image **by digest rather than by tag**, because the tag is rebuilt whenever a base package changes, and a number measured against a moving base is not reproducible.
 
+### The benchmark programs
+
+`bench/` holds four programs, each written to load a different part of the interpreter so that later comparisons have something to separate rather than one blended number:
+
+| Program | What it loads | Prints |
+|---|---|---|
+| `fib32.algo` | call and frame overhead — recursion, a fresh environment per call | `2178309` |
+| `loop10m.algo` | dispatch — ten million iterations over the smallest body that still terminates | `10000000` |
+| `arith.algo` | expression-tree traversal and operand traffic — a wide tree of operators and integer literals | `24000000` |
+| `vars.algo` | variable access — every leaf inside its loop is a variable read, and no integer literal is evaluated there at all | `136000000` |
+
+Each program is sized to run between half a second and five seconds under the tree-walk interpreter, so that run-to-run noise stays small relative to what is being measured. **That sizing is a property of the `-O2` container build and of no other.** Under the unoptimised build the test suite uses, the same four programs take an order of magnitude longer and every one of them overshoots the range — which is why the benchmark build type is set explicitly rather than inherited.
+
+The answers are not incidental. Each has a closed form checked against a computation performed outside the interpreter — `arith.algo` contributes exactly 12 per iteration and `vars.algo` exactly 136, the sum of 1 through 16 — because a benchmark that computes the wrong thing still burns instructions and would quietly corrupt every comparison drawn from it.
+
+The language has no comment syntax, so none of these files can explain itself from the inside. Their design is recorded here and in the commit that added them.
+
+**`bench/` is not `tests/`.** CTest globs `tests/*.algo` only, so no benchmark is registered as a test case and none inherits the ten-second timeout that guards the suite against a hanging `while` loop. A benchmark picked up as a test would fail that timeout on principle.
+
 Two decisions behind those numbers are recorded in [`docs/MEASUREMENT.md`](docs/MEASUREMENT.md) along with the image digest, the CPU and the compiler version. Both were settled by measurement rather than assumption: cachegrind runs **native arm64** — emulating x86_64 works but makes the counts *less* portable, because valgrind then auto-detects a host-derived cache model instead of using its own fixed defaults. And benchmarks build at **`-O2`**, not the unoptimised default the test build uses: `-O0` charges the interpreter 6.26x the instructions a real build executes, which would inflate every later comparison by optimisation the compiler simply declined to attempt.
 
 ---
@@ -454,6 +473,11 @@ algo/
 ├── README.md
 ├── Dockerfile.bench                     # Measurement platform — Ubuntu pinned by digest, cachegrind
 ├── compose.yaml                         # The `bench` service; mounts the repo, runs cachegrind
+├── bench/                               # Benchmark programs — NOT globbed by CTest
+│   ├── fib32.algo                       # Call and frame overhead — recursive fib(32)
+│   ├── loop10m.algo                     # Dispatch — ten million iterations, minimal body
+│   ├── arith.algo                       # Expression-tree traversal and operand traffic
+│   └── vars.algo                        # Variable access — every loop leaf is a variable read
 ├── docs/
 │   ├── GRAMMAR.md                       # Language reference — integer range and overflow rules
 │   └── MEASUREMENT.md                   # Image digest, CPU, compiler, and why -O2 and native arm64
