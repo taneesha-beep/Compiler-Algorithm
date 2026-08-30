@@ -3,6 +3,13 @@ build/
 # so it never shadows the default build Phase 2 measures. `build/` does not
 # match it — that pattern names one directory exactly.
 build-*/
+
+# Item 2.4 materialises each measured configuration as a git worktree here.
+# They are build inputs, not sources: the tree inside one is exactly some
+# commit already in this repository's history, and the build directory beside
+# it is Linux GCC output produced inside the container. `git worktree list` is
+# the record of which exist; this pattern only keeps them out of `git status`.
+.worktrees/
 cmake-build*
 .idea/
 .vs/

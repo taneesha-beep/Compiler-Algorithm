@@ -9,3 +9,10 @@ build-*/
 .vs/
 .idea/
 .DS_Store
+
+# Item 2.4's worktrees. Each holds a source tree plus a Linux build directory,
+# and `build-*/` above is anchored to the context root so it does not cover the
+# ones nested inside these. Excluded for the same reason as the rest of this
+# file: the image never COPYs the repository, so uploading them would only make
+# `docker compose build` slower.
+.worktrees/
