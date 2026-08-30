@@ -407,6 +407,20 @@ Not all of the row is equally trustworthy, and [`results/README.md`](results/REA
 
 Validating the driver turned up one result worth stating: **the instruction count is invocation-independent and the cache counts are not.** Measuring the same binary on the same program, the instruction count barely moves however the process is launched, while the D1 miss count of the variable-access benchmark settles on one of two well-separated values — the environment block shifts the initial process layout, and a working set that straddles a cache line lands on one side of it or the other. Each invocation style then reproduces exactly; different styles do not agree with each other. That is precisely why measurements go through one driver rather than being typed at a prompt, and it is why the attribution this project is building rests on instruction counts. The figures are in [`results/README.md`](results/README.md), beside the rows they came from.
 
+### Measuring several configurations
+
+Comparing versions of the interpreter means building several of them, and the way not to do it is a set of `#ifdef`-guarded variants of the hot path — that leaves permanently unreadable code in a repository whose readability is part of the point. Each configuration is a commit instead, and `scripts/bench-ablations.sh` takes a list of refs, materialises each as a detached git worktree, builds it into a directory of its own, and hands it to the driver once per benchmark program:
+
+```bash
+scripts/bench-ablations.sh --dry-run v1-naive-treewalk perf/iso-a
+```
+
+The working tree never moves. Nothing is checked out over it and nothing is stashed; the only file a run changes is the ledger it appends to.
+
+**This script runs on the host and the driver runs in the container, and that split is forced rather than chosen.** `git` is not installed in the measurement image, so creating a worktree is something only the host can do; valgrind does not work on arm64 macOS, so measuring is something only the container can do. Something has to cross that boundary, and the orchestrator is the only correct place for it — a driver that re-invoked docker could not be called from inside docker, and translating host paths into container paths is exactly the silently-wrong-binary failure its refusals exist to prevent. So the two halves refuse in opposite directions: the driver refuses to run outside the container, the orchestrator refuses to run inside it.
+
+One detail looks arbitrary and is load-bearing. **Worktrees are named after the commit they hold, not the ref that asked for them**, because the length of the path a binary is invoked by moves cachegrind's cache columns — by 9.6% of the D1 miss count on one benchmark, for a fourteen-character difference, with the binary image held byte-identical. Naming worktrees after tags would have given two configurations different path lengths and therefore different miss counts: an ablation delta manufactured by a tag name, in a series whose whole purpose is attributing deltas to causes. A commit-derived name is the same length for every configuration, and the script refuses a series whose paths are not. The measurement is in [`results/README.md`](results/README.md).
+
 ### The benchmark programs
 
 `bench/` holds four programs, each written to load a different part of the interpreter so that later comparisons have something to separate rather than one blended number:
@@ -495,7 +509,8 @@ algo/
 │   ├── arith.algo                       # Expression-tree traversal and operand traffic
 │   └── vars.algo                        # Variable access — every loop leaf is a variable read
 ├── scripts/
-│   └── bench.sh                         # The measurement driver — one binary, one program, one row
+│   ├── bench.sh                         # The measurement driver — one binary, one program, one row
+│   └── bench-ablations.sh               # The configuration builder — a list of refs, one worktree each
 ├── results/
 │   ├── README.md                        # Schema, and which columns may be committed as thresholds
 │   └── measurements.csv                 # The ledger — every committed number traces to a row here

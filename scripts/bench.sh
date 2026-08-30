@@ -22,8 +22,11 @@
 #      covers the repository only — so the translation would either fail or
 #      silently measure a different binary than the one named. That is the exact
 #      failure the refusal exists to prevent, reintroduced by the convenience.
-#   2. 2.4's driver runs inside the container and calls this script once per tag.
-#      A script that re-invokes docker cannot be called from inside docker.
+#   2. A script that re-invokes docker cannot be called from inside docker.
+#      (This reason was written expecting 2.4's driver to run in the container.
+#      It does not — git is not in the image, so it orchestrates from the host
+#      and invokes compose per configuration. The constraint still binds: it is
+#      why the crossing belongs to the orchestrator and not to this script.)
 #   3. A refusal is loud and falsifiable. An automatic re-invocation hides which
 #      machine produced the number, which is the one thing a result row is for.
 #
@@ -37,8 +40,10 @@
 #   70 the measurement itself failed
 #
 # Output format is CSV, not JSON, and that was forced rather than preferred: the
-# bench image has no python3 and no jq (verified, not assumed), so awk is the
-# only parser available to item 5.4's CI gate. CSV also appends without
+# bench image has no python3 and no jq (verified, not assumed), so inside the
+# container awk is the only parser there is. (The CI gate this was chosen for,
+# item 5.4, was cut; anything reading the ledger during a run still reads it
+# from inside that image, so the constraint outlived it.) CSV also appends without
 # rewriting, which keeps every measurement ever taken in one greppable ledger
 # and makes a git diff of results/ show exactly which rows a commit added.
 #
@@ -424,7 +429,7 @@ fi
 # The row
 #
 # Fields are stripped of commas, quotes and newlines so that the file is
-# readable with a bare `awk -F,` — item 5.4's CI gate has no jq and no python3.
+# readable with a bare `awk -F,` — the bench image has no jq and no python3.
 # --------------------------------------------------------------------------
 
 csv() { printf '%s' "$1" | tr -d '\r\n"' | tr ',' ';'; }

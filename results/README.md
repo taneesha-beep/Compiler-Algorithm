@@ -70,11 +70,44 @@ Two consequences:
    as model-relative rather than as facts about silicon. Item 5.3 records this in
    *Boundary of the claim*.
 
+### And the path the binary is invoked by moves them further
+
+Item 2.4 found the larger half of the same effect. The **length of `argv[0]`**
+shifts the cache columns more than the environment block does — which matters
+because a worktree build is necessarily invoked by a longer path than
+`build-bench/algo`. Same binary image, same program, same container:
+
+| Invoked as | length | `Ir` | `D1_misses` |
+|---|---|---|---|
+| `build-bench/algo` | 16 | 15,996,278,997 | **15,000,480** |
+| `.worktrees/main/build-cfg/algo` | 30 | 15,996,278,991 | **13,560,023** |
+| the worktree's own binary, copied to a 16-character path | 16 | 15,996,278,997 | **15,000,480** |
+
+The third row holds the binary fixed and changes only the path, and it
+reproduces the first **exactly on all seventeen cachegrind columns** — so this is
+the path, not the build. `Ir` spans 6 counts in 16 billion.
+
+Two consequences, both acted on rather than noted:
+
+1. **`scripts/bench-ablations.sh` names every worktree after its commit**, never
+   after the ref that asked for it, so `.worktrees/<12 hex>/build-cfg/algo` is
+   exactly 38 characters for every configuration in a series. Tag-named
+   worktrees would have given `perf/iso-a` and `perf/cum-a` different path
+   lengths and therefore different `D1_misses` — a delta manufactured by a tag
+   name. The script refuses a series whose paths are not all equal in length.
+2. **`config` rows measured from a worktree are not comparable to the `baseline`
+   rows in their cache columns** — 38 characters against 16. Phase 3 measures
+   configuration N through the orchestrator like everything else rather than
+   reusing the `baseline` rows for it. Comparing `Ir` across the two is fine.
+
 ## Schema
 
 Fields contain no commas, quotes or newlines by construction, so the file is
 readable with a bare `awk -F,`. That is deliberate: the bench image has no
-`python3` and no `jq`, so `awk` is the only parser item 5.4's CI gate can use.
+`python3` and no `jq`, so inside the container `awk` is the only parser there
+is. (The CI instruction-count gate that originally motivated this was cut before
+item 2.4; the constraint it was chosen for outlived it, because anything reading
+this file *during* a measurement run reads it from inside that image.)
 
 | Column | Meaning |
 |---|---|
@@ -99,11 +132,39 @@ re-running the whole series later to recover it.
 
 ## What is in the file today
 
-Eight rows: the four benchmark programs, each measured twice, against the
-unmodified tree-walk interpreter at commit `1854f83`. The two passes agree on
-**all seventeen cachegrind columns for all four programs**, which is item 2.3's
-acceptance criterion.
+**Eight `baseline` rows** from item 2.3: the four benchmark programs, each
+measured twice, against the unmodified tree-walk interpreter at commit
+`1854f83`, built as `build-bench/algo`. The two passes agree on **all seventeen
+cachegrind columns for all four programs**, which is item 2.3's acceptance
+criterion.
 
-The recorded commit is the parent of the commit that adds this file. That is
+Their recorded commit is the parent of the commit that adds them. That is
 correct rather than sloppy: item 2.3 changes no source file, so the interpreter
 measured is byte-for-byte the interpreter at the commit that records it.
+
+**Sixteen more from item 2.4**, labelled `main` and `75b84e8`: two refs, four
+programs, two passes, every one built in a git worktree by
+`scripts/bench-ablations.sh`. They are the acceptance evidence for that item and
+they are readable as two checks at once.
+
+*Re-running reproduces every count.* Pass 2 is **identical to pass 1 on all
+seventeen cachegrind columns for all eight (configuration, program) pairs.**
+
+*The worktree machinery measures what it claims to.* `src/` and `CMakeLists.txt`
+are byte-identical across every commit from `75b84e8` to `82a92b9`, so two refs
+drawn from that range are the same interpreter reached two different ways — and
+they agree on **all seventeen columns for all four programs**:
+
+| Program | `Ir` | `D1_misses` | `LL_misses` | `mispredicts` |
+|---|---|---|---|---|
+| `bench/fib32.algo` | 15,996,279,019 | 13,294,533 | 13,729 | 71,104,045 |
+| `bench/loop10m.algo` | 13,981,640,413 | 20,285 | 12,916 | 50,014,551 |
+| `bench/arith.algo` | 15,081,690,621 | 20,609 | 13,115 | 108,015,316 |
+| `bench/vars.algo` | 12,854,819,055 | 3,021,434 | 13,353 | 217,016,313 |
+
+Compare those `Ir` values against the `baseline` rows above and they agree to
+within process startup — 22 counts in 16 billion on `fib32`. Compare the
+`D1_misses` and they do not, for the reason in *And the path the binary is
+invoked by moves them further*: 38 characters against 16. **That is the whole
+argument for measuring configuration N through the orchestrator rather than
+reusing the `baseline` rows for it.**

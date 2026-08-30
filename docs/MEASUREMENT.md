@@ -297,11 +297,46 @@ table above is visible in the data. `results/README.md` documents the schema and
 which columns may be committed as thresholds. **Every number in this repository
 traces to a row in `results/measurements.csv`.**
 
-Two facts about this image that item 2.3 established and a later item will need:
+Two facts about this image, established by item 2.3 and load-bearing for 2.4:
 **`git` is not installed** — so `git worktree add` cannot run inside the
 container, and the driver reads `.git` directly rather than shelling out — and
 **neither is `jq`**, which together with the absent `python3` is why the result
 ledger is CSV parsed with `awk`.
+
+### Measuring several configurations — `scripts/bench-ablations.sh`
+
+Item 2.4's orchestrator. It takes a list of refs and, for each, creates a
+detached git worktree, builds it into a directory of its own and hands it to
+`scripts/bench.sh` once per benchmark program:
+
+```bash
+scripts/bench-ablations.sh v1-naive-treewalk perf/iso-a perf/iso-b
+scripts/bench-ablations.sh --dry-run main 75b84e8      # prints the plan, measures nothing
+```
+
+**It runs on the host and `scripts/bench.sh` runs in the container, and that
+split is forced rather than chosen.** `git` is not in the bench image, so
+worktree creation is host-only; valgrind does not work on arm64 macOS, so
+measurement is container-only. Something has to cross the boundary, and the
+orchestrator is the only correct place for it — a driver that re-invokes docker
+could not itself be called from inside docker, and translating a host path into
+a container path across a bind mount covering the repository only is the
+silently-wrong-binary failure the driver's refusals exist to prevent. The two
+halves therefore refuse in opposite directions: `bench.sh` refuses off Linux
+(exit 69), `bench-ablations.sh` refuses inside the container (exit 69).
+
+The worktrees live under `.worktrees/` **inside the repository**, because compose
+bind-mounts the repository as `/repo` and a worktree anywhere else is invisible
+to the container. A worktree's `.git` file names a host path that means nothing
+inside the container; that does not matter, because building needs cmake, not
+git. What does matter is that the container therefore cannot resolve the commit,
+so the orchestrator resolves each ref on the host and passes the full SHA
+through `bench.sh --commit`.
+
+Three things are held fixed while the interpreter varies: the **driver** and the
+**programs** are always this checkout's, never the worktree's — the instrument
+and the stimulus are not part of the hypothesis, and a ref older than item 2.2
+has neither — and the **invocation**, for the reason in the next section.
 
 The Docker daemon must be running — on this machine it is not started at login,
 and `docker info` failing with a missing socket means `open -a Docker` and about
@@ -406,3 +441,41 @@ Two entries already belong here and are recorded now so they are not lost:
   20-name frame"** rather than as what the environment costs in general. The
   names are also short (`v01`…`v16`), which understates the effect rather than
   inflating it, since longer keys cost more per comparison.
+
+- **The length of the binary's own path moves the cache columns too, and by more
+  than the environment block does.** Left by item 2.4, and it sharpens the entry
+  above rather than repeating it. Item 2.3 found that the environment block
+  shifts the initial process layout while `argv[0]`'s length appeared not to; it
+  does, and the effect is larger than anything 2.3 saw.
+
+  The same binary *image* — verified identical: same `text`/`data`/`bss` sizes
+  and byte-identical `LOAD` program headers, differing only in debug-info bytes
+  that are never mapped — running `bench/fib32.algo` in the same container:
+
+  | Invoked as | length | `Ir` | `D1_misses` |
+  |---|---|---|---|
+  | `build-bench/algo` | 16 | 15,996,278,997 | **15,000,480** |
+  | `.worktrees/main/build-cfg/algo` | 30 | 15,996,278,991 | **13,560,023** |
+  | `build-bench/xlgo` — the *worktree's own binary*, copied to a 16-character path | 16 | 15,996,278,997 | **15,000,480** |
+
+  The third row is the control that makes this a mechanism rather than a
+  coincidence: it holds the binary image fixed and changes only the path it is
+  invoked by, and it reproduces the first row **exactly on all seventeen
+  cachegrind columns**. `Ir` moves by 6 counts in 16 billion.
+
+  Two consequences, and the first is structural.
+
+  **`scripts/bench-ablations.sh` names each worktree after its commit rather
+  than after the ref that asked for it**, so that
+  `.worktrees/<12 hex>/build-cfg/algo` is exactly 38 characters for every
+  configuration. Naming them after tags would have made `perf/iso-a` and
+  `perf/cum-a` differ in path length and therefore in `D1_misses` — an ablation
+  delta manufactured entirely by a tag name, in a series whose entire purpose is
+  attributing deltas to causes. The script refuses to run a series whose paths
+  are not all the same length.
+
+  **Rows measured from a worktree are not comparable, in their cache columns, to
+  the eight `baseline` rows item 2.3 took as `build-bench/algo`** — 38 characters
+  against 16. So Phase 3 must measure configuration N *through the orchestrator*
+  like every other configuration, rather than reusing those rows as N. `Ir` is
+  comparable across both, and the attribution rests on `Ir`.
