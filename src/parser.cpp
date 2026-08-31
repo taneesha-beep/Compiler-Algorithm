@@ -108,6 +108,72 @@ std::int64_t integerValueOf(const Token &number)
     }
 }
 
+// Which operator a token names. Item 3.3 — ablation C — added both, and they
+// are the parse-time half of it: the interpreter used to compare a node's `op`
+// against one string literal after another on every evaluation, so `+` cost one
+// comparison and `!=` cost ten, once per binary operation executed. These run
+// once per operator in the *source* instead, and `Interpreter::evaluate`
+// switches on what they return.
+//
+// ON MAPPING FROM THE TOKEN TYPE RATHER THAN FROM THE TEXT. The lexer has
+// already decided what the characters are; deciding it a second time from the
+// string would be the same re-parse ablation B removed, moved to a new field
+// and paid once instead of on every evaluation. It is also the only version
+// that cannot disagree with the token — `parseUnary` and the four precedence
+// loops all dispatch on `TokenType`, so a switch on the same thing is checkable
+// by reading two functions rather than by trusting two spellings to match.
+//
+// ON THE THROW AT THE END OF EACH. It is unreachable: these are called only
+// with a token that `parseUnary` or one of the precedence loops has just
+// matched. It exists so that a token type added to one of those conditions and
+// not to the switch below stops the program with a diagnostic, rather than
+// dispatching as whatever a `default` arm would have chosen for it.
+BinOpKind binOpKindOf(const Token &op)
+{
+    switch (op.type)
+    {
+    case TokenType::PLUS:
+        return BinOpKind::Add;
+    case TokenType::MINUS:
+        return BinOpKind::Subtract;
+    case TokenType::MULTIPLY:
+        return BinOpKind::Multiply;
+    case TokenType::DIVIDE:
+        return BinOpKind::Divide;
+    case TokenType::LESS:
+        return BinOpKind::Less;
+    case TokenType::LESS_EQUAL:
+        return BinOpKind::LessEqual;
+    case TokenType::GREATER:
+        return BinOpKind::Greater;
+    case TokenType::GREATER_EQUAL:
+        return BinOpKind::GreaterEqual;
+    case TokenType::EQUAL_EQUAL:
+        return BinOpKind::Equal;
+    case TokenType::NOT_EQUAL:
+        return BinOpKind::NotEqual;
+    default:
+        break;
+    }
+    throw CompileError(Diagnostic{Severity::Error, op.span,
+                                  "not a binary operator: " + op.value});
+}
+
+UnaryOpKind unaryOpKindOf(const Token &op)
+{
+    switch (op.type)
+    {
+    case TokenType::MINUS:
+        return UnaryOpKind::Negate;
+    case TokenType::NOT:
+        return UnaryOpKind::Not;
+    default:
+        break;
+    }
+    throw CompileError(Diagnostic{Severity::Error, op.span,
+                                  "not a unary operator: " + op.value});
+}
+
 } // namespace
 
 Token Parser::current() { return tokens[pos]; }
@@ -291,10 +357,10 @@ Node Parser::parseEquality()
     while (current().type == TokenType::EQUAL_EQUAL ||
            current().type == TokenType::NOT_EQUAL)
     {
-        std::string op = consume().value;
+        Token op = consume();
         Node right = parseComparison();
-        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
-                                   left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span),
+                                   op.value, binOpKindOf(op), left, right);
     }
 
     return left;
@@ -309,10 +375,10 @@ Node Parser::parseComparison()
            current().type == TokenType::GREATER ||
            current().type == TokenType::GREATER_EQUAL)
     {
-        std::string op = consume().value;
+        Token op = consume();
         Node right = parseTerm();
-        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
-                                   left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span),
+                                   op.value, binOpKindOf(op), left, right);
     }
 
     return left;
@@ -325,12 +391,12 @@ Node Parser::parseTerm()
     while (current().type == TokenType::PLUS ||
            current().type == TokenType::MINUS)
     {
-        std::string op = consume().value;
+        Token op = consume();
         Node right = parseFactor();
         // A BinOp runs from the first character of its left operand to the
         // last character of its right — not merely the operator token
-        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
-                                   left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span),
+                                   op.value, binOpKindOf(op), left, right);
     }
 
     return left;
@@ -343,10 +409,10 @@ Node Parser::parseFactor()
     while (current().type == TokenType::MULTIPLY ||
            current().type == TokenType::DIVIDE)
     {
-        std::string op = consume().value;
+        Token op = consume();
         Node right = parseUnary();
-        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span), op,
-                                   left, right);
+        left = makeNode<BinOpNode>(mergeSpans(left->span, right->span),
+                                   op.value, binOpKindOf(op), left, right);
     }
 
     return left;
@@ -369,7 +435,7 @@ Node Parser::parseUnary()
         Node operand = parseUnary();
         // The span covers the operator and everything it applies to
         return makeNode<UnaryOpNode>(mergeSpans(op.span, operand->span),
-                                     op.value, operand);
+                                     op.value, unaryOpKindOf(op), operand);
     }
 
     return parsePrimary();

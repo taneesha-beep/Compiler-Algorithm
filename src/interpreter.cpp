@@ -132,6 +132,13 @@ Value Interpreter::evaluate(const Node &node)
     // so reaching a field costs what it cost then. Turning this into a switch
     // would be a dispatch change that no planned ablation accounts for, and
     // Phase 3 would have no row to attribute it to.
+    //
+    // Item 3.3 makes that worth restating, because this file now holds two
+    // `switch` statements and neither of them is this chain. Both are inside
+    // the arms below and both dispatch on *which operator* a node applies,
+    // which is ablation C. This chain dispatches on *which kind of node* it
+    // is, which is nobody's ablation. Turning it into a switch as well would
+    // fold an unaccounted change into C's number.
     if (const NumberNode *number = tryAs<NumberNode>(node))
     {
         // ON WHAT USED TO BE HERE. Until item 3.2 this arm called
@@ -191,15 +198,34 @@ Value Interpreter::evaluate(const Node &node)
         Value left = evaluate(binary->left);
         Value right = evaluate(binary->right);
 
-        // ON THE STRING COMPARISONS. Dispatching an operator by comparing its
-        // text is one of the baseline's four unforced inefficiencies, and
-        // ablation C is what removes it. The comparison operators added by item
-        // 1.1 join the same chain on purpose: if they dispatched on an enum
-        // while `+` dispatched on a string, ablation C would be measuring half
-        // an operator set and its number would not mean what it says.
-        const std::string &op = binary->op;
-
-        if (op == "+")
+        // ON WHAT USED TO BE HERE. Until item 3.3 this arm held a chain of
+        // `op == "+"`, `op == "-"`, … comparisons against the node's text, ten
+        // of them, walked from the top on every binary operation executed — so
+        // what an operator cost depended on where it sat in the chain, `+`
+        // being first and `!=` tenth. That chain was ablation C. The parser
+        // settles the operator once now, at parse time, and this dispatches on
+        // the enumerator it wrote: see `binOpKindOf` in `src/parser.cpp`. The
+        // comparison operators item 1.1 added were in the same chain and move
+        // in the same commit, because an operator set half on an enum and half
+        // on strings would have made C's number mean half of what it says.
+        //
+        // The node still carries its text and nothing on this path reads it.
+        // It stays because dropping it would change the node's size, which no
+        // ablation accounts for, and because the four diagnostics below quote
+        // it; `src/ast.h` carries that argument in full.
+        //
+        // ON WHAT DELIBERATELY DID NOT BECOME A SWITCH. The node-type chain
+        // this arm is one link of is still an if-chain, for the reason given
+        // where it starts: turning *that* into a switch would be a dispatch
+        // change no ablation accounts for, so Phase 3 would have no row to
+        // attribute it to. Only the operator chain is ablation C.
+        //
+        // Falling off the end of this switch continues down the node-type
+        // chain and ends at `unknown node type`, which is exactly where an
+        // unmatched string comparison landed before.
+        switch (binary->opKind)
+        {
+        case BinOpKind::Add:
         {
             requireIntegers(*binary, left, right);
             std::int64_t result;
@@ -207,7 +233,7 @@ Value Interpreter::evaluate(const Node &node)
                 binaryOverflowFault(*binary);
             return Value::fromInt(result);
         }
-        if (op == "-")
+        case BinOpKind::Subtract:
         {
             requireIntegers(*binary, left, right);
             std::int64_t result;
@@ -215,7 +241,7 @@ Value Interpreter::evaluate(const Node &node)
                 binaryOverflowFault(*binary);
             return Value::fromInt(result);
         }
-        if (op == "*")
+        case BinOpKind::Multiply:
         {
             requireIntegers(*binary, left, right);
             std::int64_t result;
@@ -223,7 +249,7 @@ Value Interpreter::evaluate(const Node &node)
                 binaryOverflowFault(*binary);
             return Value::fromInt(result);
         }
-        if (op == "/")
+        case BinOpKind::Divide:
         {
             requireIntegers(*binary, left, right);
             // The caret covers the whole division, not just the divisor: the
@@ -245,43 +271,50 @@ Value Interpreter::evaluate(const Node &node)
                 binaryOverflowFault(*binary);
             return Value::fromInt(left.integer / right.integer);
         }
-        if (op == "<")
+        case BinOpKind::Less:
         {
             requireIntegers(*binary, left, right);
             return Value::fromBool(left.integer < right.integer);
         }
-        if (op == "<=")
+        case BinOpKind::LessEqual:
         {
             requireIntegers(*binary, left, right);
             return Value::fromBool(left.integer <= right.integer);
         }
-        if (op == ">")
+        case BinOpKind::Greater:
         {
             requireIntegers(*binary, left, right);
             return Value::fromBool(left.integer > right.integer);
         }
-        if (op == ">=")
+        case BinOpKind::GreaterEqual:
         {
             requireIntegers(*binary, left, right);
             return Value::fromBool(left.integer >= right.integer);
         }
-        if (op == "==")
+        case BinOpKind::Equal:
         {
             requireSameType(*binary, left, right);
             return Value::fromBool(valuesEqual(left, right));
         }
-        if (op == "!=")
+        case BinOpKind::NotEqual:
         {
             requireSameType(*binary, left, right);
             return Value::fromBool(!valuesEqual(left, right));
+        }
         }
     }
     if (const UnaryOpNode *unary = tryAs<UnaryOpNode>(node))
     {
         Value operand = evaluate(unary->operand);
-        const std::string &op = unary->op;
 
-        if (op == "-")
+        // Two comparisons rather than ten, and no benchmark program applies a
+        // unary operator inside its loop — so ablation C barely moves a count
+        // here. It is in C anyway because C is defined against operator
+        // dispatch by string comparison, and a chain left behind would have
+        // been work of exactly the named kind with no row to attribute it to.
+        switch (unary->opKind)
+        {
+        case UnaryOpKind::Negate:
         {
             if (!operand.isInt())
                 unaryTypeFault(*unary, operand);
@@ -296,11 +329,12 @@ Value Interpreter::evaluate(const Node &node)
                 unaryOverflowFault(*unary);
             return Value::fromInt(result);
         }
-        if (op == "!")
+        case UnaryOpKind::Not:
         {
             if (!operand.isBool())
                 unaryTypeFault(*unary, operand);
             return Value::fromBool(!operand.boolean);
+        }
         }
     }
     if (const CallNode *call = tryAs<CallNode>(node))
