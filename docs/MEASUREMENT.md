@@ -548,3 +548,62 @@ Two entries already belong here and are recorded now so they are not lost:
   retired: an atomic increment and a plain one are close to equal in `Ir` and
   are not close to equal in time. The wall-clock columns are narrative only and
   cannot settle the difference either.
+
+- **Ablation B makes configuration B accept fewer programs than configuration
+  N, so the series is not strictly measuring one fixed language.** Left by item
+  3.2. Every other ablation so far is semantics-preserving; this one is not,
+  and the difference is worth stating rather than discovering later.
+
+  Before B, an integer literal too wide for the value type was detected by
+  `std::stoll` during the walk. Moving the conversion to parse time — which is
+  what B *is* — moves the detection with it. It stays a `CompileError` and
+  therefore exit code 65, with the same message and the same caret, all three
+  pinned by `tests/diagnostic_test.cpp`. What changes is reachability: the check
+  used to fire only on literals the program actually evaluated, and now fires on
+  every literal in the file. A program with an out-of-range literal inside a
+  function nobody calls ran clean under N and is rejected under B.
+  `tests/error_overflow_unreached.algo` pins that, and nothing in the suite
+  covered it before — reverting `src/` to the pre-B tree leaves all thirty-two
+  existing cases green.
+
+  **Why this does not contaminate the attribution.** The change is a strict
+  widening: B rejects a superset of the programs N rejects, and for every
+  program both accept the output is identical. None of the four benchmark
+  programs contains an out-of-range literal anywhere, reached or unreached, so
+  no measured row is affected. The alternative — keeping the detection at
+  evaluation time by storing a validity flag and testing it on every visit —
+  would have put a branch back on the hot path and made B remove something other
+  than the re-parse, which is a worse contamination than the one being avoided.
+
+  **How to quote B's figure.** As the cost of re-parsing literals during
+  evaluation, in a language whose out-of-range check is a compile-time check
+  either way. Not as a free lunch: a language that genuinely needed the check
+  deferred to first execution would have to keep something on the hot path, and
+  B's number would be smaller.
+
+- **An ablation's measured delta includes the compiler's response to it, and at
+  A and B that response is larger than it looks.** Left by item 3.2, and it
+  bears directly on how item 5.2's residual should be explained.
+
+  A and B remove disjoint work, and the branch counter says so exactly: the
+  interaction `(N−A) + (N−B) − (N−AB)` in the `branches` column is **zero on all
+  four benchmark programs**, not approximately zero. In `Ir` the same
+  interaction is positive and is **exactly one instruction per `IdentifierNode`
+  evaluation** — 14,000,000 against 14,000,001 implied on `arith`, 17,622,885
+  against 17,622,887 on `fib32`, 20,000,000 against 20,000,001 on `loop10m`,
+  21,000,001 against 21,000,002 on `vars`.
+
+  Neither ablation touches the identifier arm. With no branch interaction at
+  all, the mechanism cannot be control flow; it is code generation.
+  `Interpreter::evaluate` is a materially different function in each of the four
+  configurations — `0xfd4` bytes in N, `0xc44` in A, `0xd70` in B, `0x938` in
+  A+B, read with `nm -S` from the kept worktree binaries — and removing one
+  arm's work changes what the compiler does with the rest.
+
+  **The consequence for the residual is that it will not decompose into
+  "overlapping stalls" alone.** The roadmap's stated mechanism for a positive
+  residual is memory stalls hiding each other's cost, which is a claim about
+  *cycles*. This component is visible in *instructions retired*, where no stall
+  can hide anything, so it is a second and independent source of the same sign.
+  Item 5.2 should report both rather than attributing the whole residual to
+  overlap.

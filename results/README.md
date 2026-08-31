@@ -232,3 +232,153 @@ single-threaded test on the increment, the fused release check, the
 single-threaded test on the decrement, and the drop-to-zero test. The
 instruction delta agrees across the same three programs at 22.1–23.2 `Ir` per
 call. Nothing else in the interpreter changed, and the counters say so.
+
+### Phase 3, item 3.2 — eight rows: ablation B, in both series
+
+**Four `perf/iso-b` rows at commit `62fd024` and four `perf/cum-b` rows at
+`6d7e9b0`.** Unlike A, these are *two different commits*, and that is the whole
+point of the item: the isolated series applies each ablation to N alone, the
+cumulative series applies them in the order A → B → C → D, and **B is where the
+two stop being the same tree.** `perf/iso-b` is B on top of `v1-naive-treewalk`,
+on a branch off it; `perf/cum-b` is B on top of A, on `main`. The only
+non-comment difference between the two trees is ablation A's two signature
+lines, which is what makes the pair readable as a controlled comparison.
+
+There is therefore **no free reproducibility control here**, the way there was
+at A where one commit carried both tags. The controls this item has are the
+`output` column — unchanged at `24000000`, `2178309`, `10000000`, `136000000` in
+all eight rows — and the branch model below, which is a much stronger check than
+a repeat measurement.
+
+**Ablation B, applied to N alone** (`v1-naive-treewalk` minus `perf/iso-b`):
+
+| Program | `Ir` | | `D1_misses` | | `branches` | `mispredicts` |
+|---|---|---|---|---|---|---|
+| `bench/arith.algo` | −4,511,997,996 | −29.92% | +3 | +0.01% | −783,999,654 | −9,999,945 |
+| `bench/fib32.algo` | −1,846,878,088 | −11.55% | −2,070,236 | −15.57% | −310,162,732 | −15,679,089 |
+| `bench/loop10m.algo` | −3,739,999,872 | −26.75% | +0 | +0.00% | −719,999,978 | −39,999,983 |
+| `bench/vars.algo` | −23 | −0.00% | −3 | −0.00% | +0 | −1,999,927 |
+
+**Ablation B, applied on top of A** (`perf/cum-a` minus `perf/cum-b`) — this is
+the marginal step in the cumulative series, N → A → **B**:
+
+| Program | `Ir` | | `D1_misses` | | `branches` | `mispredicts` |
+|---|---|---|---|---|---|---|
+| `bench/arith.algo` | −4,497,997,996 | −34.13% | +10 | +0.05% | −783,999,654 | −7,999,959 |
+| `bench/fib32.algo` | −1,829,255,203 | −12.52% | −1,704,233 | −16.37% | −310,162,732 | +2,965,610 |
+| `bench/loop10m.algo` | −3,719,999,872 | −29.50% | +0 | +0.00% | −719,999,978 | −19,999,981 |
+| `bench/vars.algo` | +20,999,978 | +0.18% | −4 | −0.02% | +0 | +96 |
+
+#### The branch column pins B, and it takes two terms rather than one
+
+Item 3.1 divided each program's branch delta by the `evaluate` calls its source
+implies and got **exactly 5.0** three times. B does not admit a single per-visit
+figure, and it should not: what B removed is a `std::stoll` call, whose cost has
+a fixed part and a part proportional to the digits, because `strtoll` loops over
+them. So the unit is a **literal evaluation**, and the model has two terms.
+
+Solving the two coefficients on `fib32` (every literal is one digit) and
+`loop10m` (an eight-digit literal per condition, a one-digit literal per body
+turn) gives **18 branches + 4 per digit** and **115 instructions + 16 per
+digit**, per literal evaluated. `arith` and `vars` took no part in the fit and
+are predictions:
+
+| Program | literals evaluated | digits | `branches` predicted | observed | `Ir` predicted | observed |
+|---|---|---|---|---|---|---|
+| `bench/fib32.algo` | 14,098,309 | 14,098,309 | 310,162,732 | 310,162,732 | 1,846,878,088 | 1,846,878,088 |
+| `bench/loop10m.algo` | 20,000,001 | 90,000,008 | 719,999,978 | 719,999,978 | 3,739,999,872 | 3,739,999,872 |
+| `bench/arith.algo` | 32,000,001 | 52,000,007 | 783,999,902 | 783,999,654 | 4,511,999,392 | 4,511,997,996 |
+
+`arith` is predicted to **0.00003%** on both columns, on a program with a
+different node mix, a different literal-to-node ratio and a different digit
+profile from either program used to fit. The model predicts slightly *more*
+removed than was observed — 248 branches and 1,396 instructions on `arith` — and
+that is the right sign and the right order of magnitude for the parse-time
+conversion B **adds**: eighteen literals of twenty-eight digits in that source,
+which the same two coefficients price at 436 branches and 2,518 instructions,
+paid once instead of thirty-two million times.
+
+**The same two coefficients hold in the cumulative series.** B's branch delta on
+top of A is identical to B's branch delta on N — `−783,999,654`,
+`−310,162,732`, `−719,999,978`, `+0`, the same four numbers — so A and B remove
+disjoint branch traffic.
+
+**The literal counts are derived from the source, and the fit is what checks
+them.** `fib(32)` makes 2·F(33) − 1 = 7,049,155 calls, each evaluating the `2` of
+`n < 2`; its 3,524,577 non-leaf calls also evaluate the `1` and the `2` of
+`fib(n - 1) + fib(n - 2)`. `arith`'s loop body holds fourteen literals in its
+long expression **and a fifteenth in `i = i + 1`** — the first pass through this
+arithmetic omitted that one, and the model missed `arith` by 5.6% until the
+branch column forced the recount. That is the check doing its job.
+
+#### `vars` is the control, and it works in both directions
+
+`bench/vars.algo` evaluates **no literal at all inside its loop** — its bound is
+the name `limit`, its increment is the name `one`, and its twenty declarations
+are straight-line prelude. So B has nothing to remove there, and the isolated
+row says so: **−23 instructions out of 12,854,819,055**, and a branch delta of
+**exactly zero**. Every literal in that program is evaluated exactly once, so B
+moves the conversion from evaluation time to parse time rather than removing it.
+
+This is the strongest single statement the item can make about what B is. An
+ablation that showed a large effect on a program containing none of the work it
+claims to remove would be measuring something else.
+
+#### A and B interact, and the interaction is exactly one instruction per identifier
+
+This is the item's most interesting number and it belongs to item 5.2, which
+computes the residual properly over all four ablations. It is recorded here
+because it is what these rows say.
+
+The interaction is `(N−A) + (N−B) − (N−AB)` — how much the parts over-count the
+whole. In `branches` it is **exactly zero on all four programs**: A removes
+reference-count traffic, B removes a `strtoll` loop, and no branch belongs to
+both. In `Ir` it is positive and it is not noise:
+
+| Program | `Ir` interaction | `IdentifierNode` evaluations the source implies | difference |
+|---|---|---|---|
+| `bench/arith.algo` | 14,000,000 | 14,000,001 | −1 |
+| `bench/fib32.algo` | 17,622,885 | 17,622,887 | −2 |
+| `bench/loop10m.algo` | 20,000,000 | 20,000,001 | −1 |
+| `bench/vars.algo` | 21,000,001 | 21,000,002 | −1 |
+
+**One instruction per identifier evaluation, on four programs whose identifier
+counts span 14.0 to 21.0 million and whose node mixes have nothing in common,
+each fitting to within two counts.** Neither ablation touches the identifier
+arm. With the branch interaction at exactly zero, this cannot be control flow;
+it is code generation — `Interpreter::evaluate` is a materially different
+function in each of the four configurations, `0xfd4` bytes in N, `0xc44` in A,
+`0xd70` in B and `0x938` in A+B, read with `nm -S` from the kept worktree
+binaries. Removing one arm's work changes what the compiler does with the
+others.
+
+It is positive, which is the direction Phase 5 predicts: the parts sum to more
+than the whole. **Item 5.2 owns the residual**; this is one pair of four
+ablations, reported as an observation rather than as that result.
+
+#### The node grew by eight bytes, and `fib32`'s cache column shows it
+
+B adds a `std::int64_t` to `NumberNode` and keeps the digits, so the node goes
+from 48 bytes to 56 under the toolchain that took these rows (GCC 13.3.0,
+libstdc++; measured with a `sizeof` probe compiled against each worktree's
+`src/`). That is the only reason `bench/fib32.algo` — the program that allocates
+and walks by far the most nodes — moves **−15.57%** on `D1_misses` while the
+three iterative programs move by single counts. Nothing about the literal path
+explains a cache effect on a program whose literals are all one digit.
+
+This is the cost the design decision was choosing between rather than avoiding.
+Dropping `text` instead of adding beside it would have taken the node to 24
+bytes, a **−24**-byte change against this **+8** one, so the option taken is the
+smaller perturbation of the two available — and node size is not something any
+ablation in this series accounts for. See the commit message on `perf/cum-b` and
+`src/ast.h`.
+
+#### Why the ranking is not the one a reader would guess
+
+B is largest on `arith` (−29.92%) and smallest on `vars` (nil), which is what a
+literal-heavy-versus-literal-free reading predicts. `loop10m` at −26.75% ranks
+*above* `fib32` at −11.55%, and that is not an anomaly: two of `loop10m`'s six
+node visits per iteration are literals and one of them has eight digits, so it
+is literal-dense per visit even though it is a trivial program, while `fib32`
+spends most of its instructions in call and frame machinery that B does not
+touch. Ablation D is the one that will show up there.
