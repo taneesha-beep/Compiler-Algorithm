@@ -642,3 +642,90 @@ Two entries already belong here and are recorded now so they are not lost:
   inside a paragraph about exit codes. **B is the only ablation that does this**
   — A, C and D are semantics-preserving — and no benchmark program is affected,
   so no committed row moves because of it.
+
+- **Ablation C's figure does not price a chain of string comparisons, because
+  the compiler never emitted one — and C makes the branch count go up.** Left by
+  item 3.2's successor, item 3.3, and read out of the binary rather than
+  inferred, in the same way item 3.1's atomics entry above was. The roadmap's
+  description of C is *"operator selection is a chain of `node->value == "+"`
+  string comparisons"*, and at source level that is exactly what configuration N
+  contains. It is not what runs.
+
+  Disassembling `Interpreter::evaluate` in N (GCC 13.3.0, `-O2`, aarch64) shows
+  GCC had already collapsed the ten comparisons into a **length dispatch and a
+  one-byte compare chain**: `op.size()` is loaded once and tested against 1 and
+  2, and the six one-character operators are then separated by a single `ldrb`
+  and a run of `cmp`/`b.eq` against `'+'`, `'-'`, `'*'`, `'/'`, `'<'`, `'>'`.
+  There is no `memcmp` call, no per-candidate length, and no string comparison
+  in the machine sense at all.
+
+  ```
+  ldr   x2, [x20, #24]      ; op.size()
+  cmp   x2, #0x1
+  b.eq  <one-character path>
+  ...
+  ldr   x0, [x20, #16]      ; op.data()
+  ldrb  w0, [x0]
+  cmp   w0, #0x2b           ; '+'
+  b.eq  <Add>
+  cmp   w0, #0x2d           ; '-'
+  b.eq  <Subtract>
+  ```
+
+  **What replaced it is a binary decision tree, not a jump table.** GCC compiled
+  the ten-enumerator `switch` into nested `cmp`/`b.eq`/`b.gt`, and the
+  indirect-branch column says so independently: `Bi` moves by at most 20 counts
+  anywhere in the series, so no indirect jump was introduced.
+
+  **Three consequences for how C's number may be quoted.**
+
+  (i) The instruction win is real but small — between 0.05% and 0.76% of `Ir` on
+  configuration N, and 0.06% to 1.34% on top of A and B — and it is small
+  *because the compiler had already done most of the work the ablation claims to
+  do*. C is by a wide margin the cheapest of the four unforced inefficiencies,
+  and any narrative that prices it from the source text will overstate it.
+
+  (ii) **The branch column moves the other way.** C adds 20 to 50 million
+  conditional branches per program — 0.73% to 2.67% — because the character
+  chain finds `+` on its first comparison in two branches where the decision tree
+  needs five to reach `Add`. Only `*`, `/` and `<` come out ahead. A program
+  whose only binary operator is `+` gains nothing in instructions and pays three
+  branches per operation. `mispredicts` follows the branch column, up to +20% on
+  `bench/arith.algo` isolated, and that is valgrind's predictor model rather than
+  this machine's.
+
+  (iii) The per-operator costs are countable in the disassembly — 8, 10, 12, 14
+  and 16 instructions for `+ - * / <` in the chain against 8, 10, 6, 9 and 9 in
+  the switch — and multiplying them by the operator counts each benchmark source
+  implies predicts all four programs, in both series, on both columns, to within
+  41 counts in 46 million on `branches`. So the *attribution* is unusually
+  strong even though the *effect* is unusually small, and the two statements are
+  independent. `results/README.md`'s item-3.3 section carries the tables.
+
+  **A fourth point belongs here and is a boundary rather than a consequence.**
+  These per-operator costs are properties of one compiler at one optimisation
+  level. A compiler that emitted the source's chain literally, or that turned the
+  switch into a jump table, would give C a different and probably much larger
+  number on the same source. Configuration N's costs are what *this* toolchain
+  produced, and the whole series is measured under it, so the deltas are
+  internally consistent — but C's figure is the one in the series that would
+  travel worst to another toolchain.
+
+- **Ablation C changed two node sizes and moved no cache column, which is the
+  same check as B's and the opposite answer.** Left by item 3.3. `BinOpNode`
+  goes from 80 bytes to 88 and `UnaryOpNode` from 64 to 72, so the check the B
+  entry above installed — *look at node size before attributing a cache movement*
+  — was run expecting a repeat of B's −15.57% on `bench/fib32.algo`. The largest
+  movement in C's eight rows is 485 `D1_misses` out of 13.3 million.
+
+  Measured rather than argued: overriding `operator new` and building a node each
+  way, `make_shared<BinOpNode>` requests **96 bytes before C and 104 after, and
+  glibc's `malloc` returns a 104-byte usable block for both**; `UnaryOpNode` is
+  80 against 88 requested and 88 usable either way. The eight bytes fit inside
+  slack the allocator was already handing out, so every node's heap footprint is
+  byte-identical across C.
+
+  **The rule that follows is narrower than "check the node size".** A size change
+  matters to the cache columns only when it changes the *allocation* size, and
+  `make_shared` plus glibc's 16-byte granularity means a node can grow without
+  that happening. Item 3.4 should check the allocated block, not `sizeof`.

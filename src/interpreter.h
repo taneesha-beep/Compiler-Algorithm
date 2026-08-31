@@ -132,10 +132,20 @@ public:
     // because the isolated and cumulative series coincide at A.
     //
     // The re-parsed literal went next, at item 3.2: `NumberNode` now carries
-    // the integer its digits denote, converted once by the parser. Two of the
-    // baseline's unforced inefficiencies are left untouched — the
-    // string-compared operator (3.3) and the string-keyed frame (3.4) — and
-    // `CLAUDE.md`'s *Do not "fix" these* still protects both.
+    // the integer its digits denote, converted once by the parser. The
+    // string-compared operator went at item 3.3: both operator arms `switch` on
+    // an enumerator the parser writes onto the node. **One of the baseline's
+    // four unforced inefficiencies is left** — the string-keyed frame, ablation
+    // D, item 3.4 — and `CLAUDE.md`'s *Do not "fix" these* still protects it.
+    //
+    // Item 3.3 is worth one more line here, because its row says something the
+    // other two do not. It removed between 0.05% and 1.34% of instructions and
+    // *added* 20 to 50 million conditional branches per program: GCC had already
+    // collapsed the ten string comparisons into a length test and a one-byte
+    // compare chain, and the enum switch compiles to a binary decision tree that
+    // is dearer for `+` and `-` than the chain was. The dispatch this file
+    // describes and the dispatch the processor runs were not the same dispatch.
+    // `docs/MEASUREMENT.md`'s *Boundary of the claim* carries the disassembly.
     Value evaluate(const Node &node);
     void execute(const std::vector<Node> &statements);
 };

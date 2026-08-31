@@ -395,3 +395,196 @@ node visits per iteration are literals and one of them has eight digits, so it
 is literal-dense per visit even though it is a trivial program, while `fib32`
 spends most of its instructions in call and frame machinery that B does not
 touch. Ablation D is the one that will show up there.
+
+### Phase 3, item 3.3 — eight rows: ablation C, in both series
+
+**Four `perf/iso-c` rows at commit `53da227` and four `perf/cum-c` rows at
+`ef4dc25`.** The same arrangement as B, and for the same reason: from B onward
+the isolated and cumulative series are different trees. `perf/iso-c` is C on top
+of `v1-naive-treewalk` — **not** on top of `perf/iso-b`, which is its sibling
+rather than its parent — and `perf/cum-c` is C on top of B on top of A. Checked
+before the pass rather than after: `git diff v1-naive-treewalk..perf/iso-c`
+shows C and nothing else, and the whole non-comment difference between the two
+C trees is ablation A's two signature lines plus ablation B's conversion.
+
+`output` is unchanged in all eight rows — `24000000`, `2178309`, `10000000`,
+`136000000`. C is the first ablation since A that changes nothing a program can
+observe: no diagnostic, exit code or caret moves, and the 33 existing tests are
+the correctness check.
+
+**Ablation C, applied to N alone** (`v1-naive-treewalk` minus `perf/iso-c`):
+
+| Program | `Ir` | | `D1_misses` | | `branches` | `mispredicts` |
+|---|---|---|---|---|---|---|
+| `bench/arith.algo` | −113,999,864 | −0.76% | +8 | +0.04% | **+45,999,958** | +22,000,010 |
+| `bench/fib32.algo` | −42,294,848 | −0.26% | −485 | −0.00% | **+24,672,025** | +3,245,013 |
+| `bench/loop10m.algo` | −59,999,957 | −0.43% | −2 | −0.01% | **+19,999,994** | +18 |
+| `bench/vars.algo` | −5,999,681 | −0.05% | +4 | +0.00% | **+49,999,978** | +8,000,042 |
+
+**Ablation C, applied on top of A and B** (`perf/cum-b` minus `perf/cum-c`) —
+the marginal step in the cumulative series, N → A → B → **C**:
+
+| Program | `Ir` | | `D1_misses` | | `branches` | `mispredicts` |
+|---|---|---|---|---|---|---|
+| `bench/arith.algo` | −115,999,864 | −1.34% | −7 | −0.03% | **+45,999,958** | −6,000,009 |
+| `bench/fib32.algo` | −49,344,002 | −0.39% | −3 | −0.00% | **+24,672,025** | +8,563,529 |
+| `bench/loop10m.algo` | −69,999,957 | −0.79% | −1 | −0.00% | **+19,999,994** | +9,999,987 |
+| `bench/vars.algo` | −6,999,681 | −0.06% | +2 | +0.01% | **+49,999,978** | −101 |
+
+#### C removes instructions and *adds* branches, and the reason is in the binary
+
+This is the item's central finding and it is not a small qualification. Every
+number above is real, reproduces, and is predicted to six or seven significant
+figures by the model below — but the mechanism is not the one the roadmap names
+for this ablation, and the sign of the branch column is not the one a reader of
+the source would expect.
+
+**The source describes a chain of up to ten string comparisons. The compiler
+does not emit one.** Disassembling `Interpreter::evaluate` in configuration N
+(GCC 13.3.0, `-O2`, aarch64) shows GCC collapsed the whole chain into a
+**length dispatch followed by a single-character compare chain**: it loads
+`op.size()` once, branches on 1 versus 2, and then — for the six one-character
+operators — loads one byte and compares it against `'+'`, `'-'`, `'*'`, `'/'`,
+`'<'`, `'>'` in turn. No string comparison, no `memcmp` call, no length
+recomputed per candidate.
+
+**And the switch is not a jump table.** GCC compiled the ten-enumerator switch
+into a *balanced binary decision tree* — `cmp #5` / `b.eq` / `b.gt`, then
+`cmp #2` / `b.eq` / `b.gt`, and so on. The indirect-branch column confirms it:
+`Bi` moves by **at most 20 counts** across the whole series, so no indirect jump
+was introduced anywhere.
+
+Counting the two dispatches instruction by instruction in the disassembly gives
+this, and nothing here is fitted:
+
+| Operator | chain position | chain `Ir` | switch `Ir` | chain branches | switch branches | `Ir` removed | branches **added** |
+|---|---|---|---|---|---|---|---|
+| `+` | 1 | 8 | 8 | 2 | 5 | **0** | **+3** |
+| `-` | 2 | 10 | 10 | 3 | 6 | **0** | **+3** |
+| `*` | 3 | 12 | 6 | 4 | 3 | **6** | −1 |
+| `/` | 4 | 14 | 9 | 5 | 5 | **5** | 0 |
+| `<` | 5 | 16 | 9 | 6 | 5 | **7** *(6 isolated)* | −1 |
+
+So the effect really does track operator mix rather than operation count — but
+much more sharply than "later in the chain is dearer". **A program whose only
+operator is `+` gains no instructions at all from C and pays three extra
+branches per operation**, because the character chain finds `+` on its first
+comparison while the decision tree needs five branches to reach `Add`. Only
+`*`, `/` and `<` — the operators the character chain reaches third, fourth and
+fifth — come out ahead.
+
+`evaluate` barely shrank, and that is the same statement from a third angle.
+Read with `nm -S` from the kept worktree binaries, `Interpreter::evaluate` is
+**`0xfd4` bytes in N and `0xfa4` in `perf/iso-c`** — 48 bytes, where ablation A
+took 912 and ablation B took 612. In the cumulative arm it is `0x938` against
+`0x8f4`, 68 bytes. The `0x938` is a free control on the method: item 3.2
+recorded exactly that figure for A+B, and this is a different session reading
+the same binary a different way.
+
+#### The model predicts all four programs, in both series, with nothing fitted
+
+Multiply the per-operator costs above by the operator counts each source
+implies and compare against the rows. There is no free parameter: the costs
+were counted in the disassembly, not solved for.
+
+| Program | `+` | `-` | `*` | `/` | `<` | `Ir` predicted | observed | `branches` predicted | observed |
+|---|---|---|---|---|---|---|---|---|---|
+| `bench/arith.algo` | 12,000,000 | 8,000,000 | 12,000,000 | 6,000,000 | 2,000,001 | 114,000,006 | 113,999,864 | −45,999,999 | −45,999,958 |
+| `bench/fib32.algo` | 3,524,577 | 7,049,154 | — | — | 7,049,155 | 42,294,930 | 42,294,848 | −24,672,038 | −24,672,025 |
+| `bench/loop10m.algo` | 10,000,000 | — | — | — | 10,000,001 | 60,000,006 | 59,999,957 | −19,999,999 | −19,999,994 |
+| `bench/vars.algo` | 17,000,000 | — | — | — | 1,000,001 | 6,000,006 | 5,999,681 | −49,999,999 | −49,999,978 |
+
+Worst error on `branches` is **41 counts in 46 million** (0.00009%); worst on
+`Ir` is 325 in 6 million (0.005%), on the program where the total is smallest.
+Every residual is the same sign and the same order — tens to hundreds of counts
+— which is one-time work at parse and process start, the only place the two
+binaries differ off the hot path.
+
+**This is where item 3.1's and 3.2's per-visit check had to change shape a third
+time.** A priced a fixed sequence, so one constant fitted three programs. B
+priced a loop over digits, so it took two terms. C prices *different work per
+operator*, so no single per-operation figure exists at all, and the linear
+"cost rises with chain position" model a reader would reach for first misses
+`arith` by 35% and `fib32` by 29%. The instruction that resolves it is the
+disassembler, not the arithmetic: the chain the source describes and the chain
+the processor executes are different chains. 3.2's lesson — *when the model
+misses, suspect your counting first* — extends to what is being counted.
+
+#### C's interaction with A and B is exactly one instruction per `<` evaluation
+
+`branches` is **identical in the two series** — `+45,999,958`, `+24,672,025`,
+`+19,999,994`, `+49,999,978`, the same four numbers on top of N and on top of
+A+B, difference exactly zero on all four programs. C's branch effect does not
+interact with A or B at all, the same result the A×B pair gave.
+
+In `Ir` it does interact, and cleanly:
+
+| Program | isolated `Ir` removed | cumulative | difference | `<` evaluations | difference − (`<` − 1) |
+|---|---|---|---|---|---|
+| `bench/arith.algo` | 113,999,864 | 115,999,864 | 2,000,000 | 2,000,001 | **0** |
+| `bench/fib32.algo` | 42,294,848 | 49,344,002 | 7,049,154 | 7,049,155 | **0** |
+| `bench/loop10m.algo` | 59,999,957 | 69,999,957 | 10,000,000 | 10,000,001 | **0** |
+| `bench/vars.algo` | 5,999,681 | 6,999,681 | 1,000,000 | 1,000,001 | **0** |
+
+C is worth exactly one instruction per `<` more when A and B are already
+applied, on four programs whose `<` counts span 1.0 to 10.0 million — exact, not
+approximate, on every one. The mechanism is visible: the `<` arm's body is
+byte-identical in the two configurations except for a `mov x2, #1` that the
+compiler re-materialises inside the arm in the isolated tree and hoists out of it
+in the cumulative one. One instruction, given back on the isolated side, which
+is why the table above records `<` at 7 instructions removed in the cumulative
+series and 6 in the isolated one.
+
+**That is the same kind of interaction item 3.2 found, and it is again not
+stalls.** A×B was one instruction per `IdentifierNode` evaluation; C×AB is one
+instruction per `<` evaluation. Both are visible in instructions retired, where
+nothing can hide behind a memory stall, and both are the compiler re-generating
+the arms it did not change once a neighbouring arm shrinks. **Item 5.2 owns the
+residual**; this is recorded here as what these rows say.
+
+#### The node grew by eight bytes and the cache columns did not move
+
+`BinOpNode` goes from 80 bytes to 88 under C, and `UnaryOpNode` from 64 to 72
+(GCC 13.3.0, libstdc++, `sizeof` probe compiled against each tree). B's
+comparable eight bytes on `NumberNode` moved `bench/fib32.algo` by −15.57% on
+`D1_misses`, so the check `CLAUDE.md` requires — *look at node size before
+attributing a cache movement to the ablation's named cause* — was run here
+expecting to find something. It found the opposite: the largest cache movement
+anywhere in these eight rows is **485 misses out of 13.3 million** on `fib32`,
+which is nothing.
+
+The reason is decisive and was measured rather than argued. Overriding
+`operator new` and building a node each way, `make_shared<BinOpNode>` requests
+**96 bytes before C and 104 after — and glibc's `malloc` returns a 104-byte
+usable block for both.** `UnaryOpNode` is 80 against 88 requested, 88 usable
+either way. The eight bytes fit inside slack the allocator was already handing
+out, so **every node's heap footprint is byte-identical across C** and there is
+nothing for the cache columns to move.
+
+#### The branch predictor gets worse, and that column is a model figure
+
+`mispredicts` rises where `branches` rises: **+20.37%** on `arith` isolated,
++4.56% on `fib32`, +3.69% on `vars`, and 18 counts on `loop10m`. In the
+cumulative series it is louder and less orderly — +99.85% on `loop10m`, +21.01%
+on `fib32`, −6.38% on `arith` — which is what a two-level adaptive predictor
+does when the branch *pattern* changes rather than the branch count.
+
+This is valgrind's predictor, not this machine's, exactly as the *three groups
+of columns* table above says. It is reported because the direction is
+consistent with the branch column and against the instruction column, not as a
+claim about any real processor.
+
+#### What C is actually worth, stated plainly
+
+Between −0.05% and −0.76% of instructions on N, and −0.06% to −1.34% on top of A
+and B. Against A (−7.04% to −12.62%) and B (−0.00% to −29.92%) that is small,
+and the honest summary is that **the operator dispatch was the cheapest of the
+baseline's four unforced inefficiencies by a wide margin, because the compiler
+had already optimised most of it away.** The naive reading of the source — ten
+string comparisons, up to ten `memcmp` calls per operation — describes work the
+binary never did.
+
+It also means C is the first ablation in the series that makes a counter go the
+wrong way. Reporting the instruction win without the branch loss would be
+choosing the flattering column; both are in the rows above and both belong in
+item 5.1's table.
