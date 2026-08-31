@@ -60,7 +60,8 @@ namespace
 // there are no closures (see the roadmap's Out of scope table), so a body
 // reading a top-level name would be reading a *global*, which is a third kind
 // of storage beside the frame and the slot — one the roadmap never describes
-// and item 3.4 has no vector for. Everything a function needs, it is passed.
+// and one that ablation D's per-call frame vector has no room for. Everything
+// a function needs, it is passed.
 //
 // The lookup below is what enforces it: it searches the current frame's scopes
 // and stops. `visibleInAnEnclosingFrame` exists only to tell a reader who
@@ -164,13 +165,17 @@ struct Resolver
     //
     // ON NOT REUSING SLOTS. A closing scope does not hand its slots back, so
     // the frame is as wide as the number of variables the program declares
-    // rather than as its deepest scope. Reuse would save a few words in a
-    // vector that nothing indexes yet, and would cost two things worth more
-    // than that: two distinct variables would share a number, so "the inner `x`
-    // is a different variable from the outer `x`" would stop being observable
-    // in the very index this pass exists to assign; and item 3.4's environment,
-    // sized once from the frame and never resized, would have live slots
-    // aliasing dead ones.
+    // rather than as its deepest scope. Reuse would save a few words per frame
+    // and would cost two things worth more than that: two distinct variables
+    // would share a number, so "the inner `x` is a different variable from the
+    // outer `x`" would stop being observable in the very index this pass exists
+    // to assign; and ablation D's environment, sized once from the frame and
+    // never resized, would have live slots aliasing dead ones.
+    //
+    // Since ablation D this is load-bearing rather than a preference. That
+    // environment is a flat `std::vector<Value>` with no scope structure of its
+    // own, so the only thing standing between the inner `x` and the outer one
+    // is that they were given different numbers here.
     int declareOrBind(const std::string &name)
     {
         if (const int *existing = lookup(name))

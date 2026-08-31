@@ -67,36 +67,53 @@ enum class Flow
 
 class Interpreter
 {
-    // ON THE ENVIRONMENT. One ordered map keyed on `std::string` per call,
-    // held on a stack of them, and every part of that is deliberate.
+    // ON THE ENVIRONMENT. One `std::vector<Value>` per call, indexed by the
+    // frame slot the resolver assigned, held on a stack of them.
     //
     // It is *per call* because item 1.4 makes recursion expressible and one
-    // flat map cannot hold it: `fib(n)` calling `fib(n - 1)` would find a
+    // flat frame cannot hold it: `fib(n)` calling `fib(n - 1)` would find a
     // single shared `n`, and the inner call's binding would destroy the outer
     // one's. Every call therefore gets its own environment and drops it on the
     // way out, which is what makes each activation's parameters its own.
     //
-    // It is still *an ordered map keyed on a string* because that is ablation
-    // D's subject, and D has to stay the same experiment it was described as:
-    // "string-keyed map -> slot-indexed vector". The resolver has already
-    // written a frame slot onto every variable reference and a frame width
-    // onto every function, and item 3.4 is the commit that spends them, by
-    // making each of these frames a `std::vector` indexed by slot. Turning one
-    // into a vector now would be performing that ablation with nothing
-    // recording what it bought. See the note in `src/ast.h` on
-    // `IdentifierNode::slot`.
+    // ⚠️ THIS IS THE ISOLATED ARM OF ABLATION D. This commit is `perf/iso-d`,
+    // one commit on a branch off `v1-naive-treewalk` — configuration N — and
+    // it is not on `main`. It carries D and **nothing else**: `evaluate` still
+    // takes its `Node` by value (ablation A is not here), `NumberNode` still
+    // re-parses its digits (B is not here), and both operator arms still walk
+    // a chain of string comparisons (C is not here). D applied on top of A, B
+    // and C is `perf/cum-d` on `main`, which is configuration **H**.
     //
-    // The stack itself is common to both sides of that ablation — a per-call
-    // vector needs exactly the same stack a per-call map does — so it changes
+    // What D replaced was a `std::map<std::string, Value>`, in which a
+    // variable access was `find` against an ordered map: O(log n) comparisons
+    // of `std::string`, where n is the number of variables the enclosing
+    // function declares. The resolver has written a slot onto every
+    // `IdentifierNode`, every `AssignNode` and every `Parameter` since item
+    // 1.3, and a width onto every `FunctionNode`, and all four are read here —
+    // because binding an argument is a write to a variable, and an ablation
+    // that indexed only the reads would be half applied and its number would
+    // mean half of what it says.
+    //
+    // The stack itself is common to both sides of the ablation — a per-call
+    // vector needs exactly the same stack a per-call map did — so it changes
     // what D starts from without changing what D measures.
-    using Environment = std::map<std::string, Value>;
+    using Environment = std::vector<Value>;
     std::vector<Environment> frames; // the program's own frame is frames[0]
 
     // Every function the program declares, by name. Functions are not values,
     // so this is a namespace of its own rather than anything a variable could
-    // hold, and a call reaches it by the name the parser recorded — the same
-    // string lookup a variable takes, and for the same reason: replacing it
-    // with an index is Phase 4's work, not a Phase 1 optimisation.
+    // hold, and a call reaches it by the name the parser recorded.
+    //
+    // ON WHY THIS MAP DID NOT MOVE WITH THE ENVIRONMENT. It is the same
+    // container looked up the same way, so converting it in the same commit
+    // would have been the easy thing to do. It is not ablation D: the roadmap
+    // defines D as variable access against `std::map<std::string, ...>` and
+    // `CLAUDE.md` as *"the environment is a `std::map<std::string, Value>`
+    // looked up by name"* — both name the frame, and the frame is what moved.
+    // Converting this one alongside it would have folded a second change into
+    // this tag with no row to attribute it to, so `perf/iso-d` would price two
+    // removals where the ledger records one. Replacing it with an index is
+    // Phase 4's work, not a Phase 3 ablation.
     std::map<std::string, const FunctionNode *> functions;
 
     // Where a `return` leaves its value for the call that is waiting on it.
@@ -116,5 +133,13 @@ public:
     // inefficiencies the baseline is required to keep, and it is ablation A's
     // entire subject. Do not change it to `const Node &` before item 3.1.
     Value evaluate(Node node);
-    void execute(const std::vector<Node> &statements);
+
+    // `frameSize` is how many slots the program's own frame needs, which is
+    // what `resolve()` returns — see `src/resolver.h`. It is a parameter
+    // rather than something recomputed here because the resolver is the only
+    // thing that knows: it numbered those slots, and it does not reuse one
+    // when a scope closes, so the width is not derivable from the statement
+    // list without repeating the walk. A function's own width travels on its
+    // node instead, in `FunctionNode::frameSize`. Ablation D added it.
+    void execute(const std::vector<Node> &statements, int frameSize);
 };

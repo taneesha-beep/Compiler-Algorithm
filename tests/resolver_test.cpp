@@ -1,8 +1,10 @@
 // Unit checks for the resolution pass — roadmap item 1.3.
 //
 // Most of what this pass does is invisible from a stream. A slot index is
-// written onto a node and read by nothing until item 3.4, so no program can
-// print one and no golden case can assert one; the acceptance criterion "every
+// written onto a node, and since ablation D the interpreter indexes a frame by
+// it — but no program can print one and no golden case can assert one, and a
+// wrong slot shows up only as a wrong answer somewhere else; the acceptance
+// criterion "every
 // identifier node carries a valid slot index after the pass" is only reachable
 // by walking the tree, which is what this binary does. Scoping is half visible
 // — a program that used to run and now does not shows up as an exit code — but
@@ -62,7 +64,8 @@ void checkText(const std::string &what, const std::string &actual,
 
 // One mention of a variable in the source, in source order: the assignment
 // target and the read are both here, because both have to carry a slot for
-// item 3.4 to index the environment on either side of an assignment.
+// the interpreter to index the environment on either side of an assignment —
+// which it has done since ablation D.
 struct Reference
 {
     std::string name;
@@ -399,7 +402,8 @@ void aLoopBodyAssignsTheVariablesItSees()
 // A slot is not handed back when its scope closes, so two variables that can
 // never be live at once still get different numbers. Reuse would make "these
 // are two variables" unobservable in the index this pass exists to assign, and
-// would give item 3.4's environment live slots aliasing dead ones.
+// would give the environment ablation D introduced live slots aliasing dead
+// ones.
 void aClosedScopeDoesNotHandItsSlotsBack()
 {
     const std::string source =
@@ -490,7 +494,7 @@ void aFunctionBodyIsAFrameOfItsOwn()
 
     // The point of a frame: both functions and the program number from zero,
     // so slot 0 exists three times over and means something different each
-    // time. Item 3.4 gives each frame its own vector, and this is why.
+    // time. Ablation D gives each frame its own vector, and this is why.
     for (const FunctionNode *function : functions)
     {
         std::set<int> slots;
