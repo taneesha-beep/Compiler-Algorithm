@@ -588,3 +588,298 @@ It also means C is the first ablation in the series that makes a counter go the
 wrong way. Reporting the instruction win without the branch loss would be
 choosing the flattering column; both are in the rows above and both belong in
 item 5.1's table.
+
+### Phase 3, item 3.4 — eight rows: ablation D, in both series
+
+**Four `perf/iso-d` rows at commit `f194531` and four `perf/cum-d` rows at
+`f1b040c`.** The same arrangement as B and C: `perf/iso-d` is D on top of
+`v1-naive-treewalk` — **not** on top of `perf/iso-c`, which is its sibling
+rather than its parent — and `perf/cum-d` is D on top of C on top of B on top
+of A. **`perf/cum-d` is configuration H**, the hardened tree-walker, and Phase
+3 ends here.
+
+Checked before the pass rather than after, with comments stripped from both
+sides: `git diff v1-naive-treewalk..perf/iso-d -- src/ tests/` is ablation D
+and nothing else, and the whole non-comment difference between the two D trees
+is A's two signature lines, B's conversion and node field, and C's two enums
+and their two `switch`es — **with D's own seven lines byte-identical in both
+trees**, which is what proves the same D was applied to both arms.
+
+`output` is unchanged in all eight rows — `24000000`, `2178309`, `10000000`,
+`136000000`. D is a representation change: no diagnostic, exit code or caret
+moves, and no test was added. The 33 existing cases are the correctness check
+(32 on the isolated tree, which predates B's).
+
+**Ablation D, applied to N alone** (`v1-naive-treewalk` minus `perf/iso-d`):
+
+| Program | `Ir` | | `D1_misses` | | `branches` | `mispredicts` |
+|---|---|---|---|---|---|---|
+| `bench/arith.algo` | −4,156,001,429 | −27.56% | −8 | −0.04% | −1,146,000,289 | −22,000,089 |
+| `bench/fib32.algo` | −4,356,476,173 | −27.23% | **+4,341,619** | **+32.66%** | −937,274,052 | −15,909,503 |
+| `bench/loop10m.algo` | −4,910,000,703 | −35.12% | −7 | −0.03% | −1,270,000,143 | −20,000,056 |
+| `bench/vars.algo` | **−9,812,015,887** | **−76.33%** | −3,000,056 | −99.29% | −2,827,003,339 | −210,000,278 |
+
+**Ablation D, applied on top of A, B and C** (`perf/cum-c` minus `perf/cum-d`)
+— the last marginal step in the cumulative series, N → A → B → C → **D** = H:
+
+| Program | `Ir` | | `D1_misses` | | `branches` | `mispredicts` |
+|---|---|---|---|---|---|---|
+| `bench/arith.algo` | −4,160,001,433 | −48.58% | −3 | −0.01% | −1,146,000,289 | −30,000,068 |
+| `bench/fib32.algo` | −4,300,082,930 | −33.77% | **+3,161,355** | **+36.30%** | −937,274,052 | −7,666,416 |
+| `bench/loop10m.algo` | −4,900,000,703 | −55.55% | −7 | −0.03% | −1,270,000,143 | −29 |
+| `bench/vars.algo` | **−9,814,015,980** | **−82.03%** | −54 | −0.25% | −2,827,003,339 | −209,000,373 |
+
+**D is the largest single effect in the series by a wide margin, which is what
+the roadmap predicted for it.** Its smallest figure (−27.23% on `fib32`) is
+close to B's largest (−29.92% on `arith`), and its largest is −76.33% isolated
+and −82.03% cumulative. Against A (−7.04% to −12.62%) and C (−0.05% to −0.76%)
+it is not a close contest. This is the only prediction the roadmap made about
+an ablation's *size* that the measurement confirmed.
+
+#### It is a figure about a 20-name frame, and that is not a quibble
+
+`bench/vars.algo` declares twenty variables, and what D removes scales with how
+deep the map is and how expensive its keys are to compare. **−76.33% is a
+property of that program, not of Algo.** `bench/loop10m.algo`, whose frame holds
+one name, gives −35.12% for the same ablation; `bench/fib32.algo`, one parameter
+per call frame, gives −27.23%. Item 2.2 chose twenty deliberately so that D
+would have something to attribute, and `docs/MEASUREMENT.md`'s *Boundary of the
+claim* has said since then that D's number must be quoted with the frame width
+attached. It still must.
+
+Note also that the ranking is not monotone in frame width: `loop10m` (1 name)
+shows a *larger* fraction than `arith` (2 names), because `loop10m`'s loop body
+is so thin that the map is a bigger share of a smaller total. The per-lookup
+cost is what rises with depth; the percentage is that cost divided by whatever
+else the program does.
+
+#### The bracket item 2.2 left open is resolved, and D is above its top end
+
+`docs/MEASUREMENT.md` recorded that "map machinery plus string-key comparison is
+somewhere between **23% and 56%** of `bench/vars.algo`'s instructions", the
+spread being how much of `bcmp` served map keys rather than the operator
+chain, and said **ablation D is itself the instrument that resolves it.**
+
+It resolves to **76.33%**, which is above the bracket rather than inside it, and
+the reason is instructive. The bracket was built by reading cachegrind's
+per-function totals and adding up the functions whose *names* are the map. But
+`std::map::find` is **inlined into `Interpreter::evaluate`**, so its descent
+loop is charged to `evaluate` and never appeared in the bracket at all; only the
+out-of-line `map::operator[]` and `bcmp` did. Item 3.3's lesson — *the program
+you model from the source is not the program that ran* — applies to attribution
+by function name just as much as to attribution by source text.
+
+#### The model is a decomposition, and it has no fitted parameter
+
+Ablation A priced a fixed sequence, so one constant fitted three programs.
+Ablation B priced a loop over digits, so it took two terms. Ablation C priced
+different work per operator, so it took a table read out of `objdump`. **D
+admits no per-comparison formula at all**, and the instrument that works is
+cachegrind's own per-function profile — a diagnostic run at a different
+invocation, which is legitimate here because `Ir` is invocation-stable to a few
+hundred counts in billions while the cache columns are not.
+
+Every instruction D removes is in one of five places, and three of them go to
+**exactly zero**:
+
+| function | `bench/arith.algo` | `bench/loop10m.algo` | `bench/vars.algo` |
+|---|---|---|---|
+| `bcmp` (the string key comparison) | 1,392,001,885 → **0** | 1,400,001,369 → **0** | 4,264,009,661 → **0** |
+| `std::map::operator[]` | 1,246,000,178 → **0** | 1,540,000,154 → **0** | 2,468,000,363 → **0** |
+| `Interpreter::evaluate` (the inlined `find`) | −882,000,126 | −1,040,000,104 | −1,906,000,277 |
+| `Interpreter::executeStatement` | −252,000,061 | −530,000,020 | −198,001,307 |
+| PLT stubs for the two calls above | −384,000,092 | −400,000,036 | −976,001,148 |
+
+`bench/fib32.algo` adds two more that only it exercises, because it is the only
+program that pushes a frame per call: `_Rb_tree::_M_emplace_hint_unique`
+387,703,525 → **0** and the rest of `_Rb_tree` 190,327,185 → **0**.
+
+**The sharp check is `bcmp`, and it is exact.** Divide the `bcmp` instructions D
+removes by the key comparisons each source implies:
+
+| Program | key comparisons | `bcmp` `Ir` removed | per comparison |
+|---|---|---|---|
+| `bench/loop10m.algo` | 100,000,008 | 1,400,001,369 | **14.00** |
+| `bench/fib32.algo` (environment only) | 70,491,548 | 986,881,672 | **14.0000** |
+
+Both programs compare one-byte keys and nothing else — `i` against `i`, `n`
+against `n` — and both give **exactly fourteen instructions per comparison**,
+`fib32` to the count and `loop10m` to 1,257 counts of process startup.
+`bench/arith.algo` and `bench/vars.algo` mix key lengths and outcomes and
+average 16.98 and 16.34, which is the right direction and cannot be resolved
+further: glibc's `bcmp` costs different amounts for the same length depending
+on operand alignment, so no exact per-comparison table exists to be written.
+**Saying so is the finding.** A fitted two-term model in lookups and comparisons
+predicts `arith` 10.6% low and `vars` 43% high, and reporting either would be
+inventing a mechanism.
+
+#### D's falsifying control is the map it deliberately did not remove
+
+Every ablation needs a measurement that should show nothing. D's is unusual and
+stronger than a null program: **after D, `bcmp` is exactly the function table
+and nothing else.**
+
+`Interpreter::functions` is a second `std::map<std::string, …>` looked up by
+name, and D deliberately left it alone — it is not what the roadmap defines D
+against, and converting it would have folded an unaccounted change into D's tag.
+Three of the four benchmark programs declare no function, and their `bcmp` in
+configuration D is **exactly 0**. `bench/fib32.algo` declares one, and its
+surviving `bcmp` is **253,770,945**. Its calls make
+7,049,155 × 2 = 14,098,310 comparisons of the three-character name `fib`, which
+at eighteen instructions each is 253,769,580 — the observed figure minus 1,365,
+and 1,365 is the same process-startup constant the loader contributes elsewhere.
+
+So the residual is not merely small; it is *predicted to five significant
+figures by the one string-keyed lookup that was left in place on purpose*. An
+ablation that had removed something other than the environment's key
+comparisons could not produce that.
+
+#### `vars` loses 99.29% of its D1 misses — and A had already taken them
+
+Item 3.1 removed **99.29%** of `bench/vars.algo`'s D1 misses, and
+`docs/MEASUREMENT.md` recorded the consequence: *ablation D should not be
+expected to show a large D1 effect once A is already applied.* Both halves are
+now measured and both hold exactly.
+
+| | `bench/vars.algo` `D1_misses` |
+|---|---|
+| N | 3,021,434 |
+| N + D (isolated) | 21,378 — **−99.29%** |
+| N + A + B + C | 21,425 |
+| N + A + B + C + D (**H**) | 21,371 — **−54, or −0.25%** |
+
+**A and D independently remove the same three million misses.** In the isolated
+arm D takes them; in the cumulative arm A has already taken them and D finds
+fifty-four. This is the first cache-column interaction the series has produced,
+and it is total rather than partial.
+
+The allocation arithmetic says why, and it was measured rather than argued —
+overriding `operator new` and reading `malloc_usable_size`. A twenty-name frame
+as a `std::map` is **twenty separate allocations of 80 bytes requested and 88
+usable**, one per name, scattered wherever glibc had room. The same frame as a
+`std::vector<Value>` is **one allocation of 320 requested and 328 usable**, and
+every slot is on a line its neighbours share.
+
+#### But `fib32`'s D1 misses go UP by a third, and the cause is a size class
+
+This is D's version of ablation C's branch column: a counter that moves the
+wrong way, and it belongs in the record beside the win.
+
+`bench/fib32.algo` is the only program that pushes and pops a frame per call —
+7,049,155 of them — and its `D1_misses` rise from 13,294,533 to **17,636,152**,
++32.66% isolated and +36.30% cumulative. D *reduces* fib32's data traffic by a
+quarter at the same time (`Dr` + `Dw` from 7,557,008,870 to 5,596,015,408), so
+the miss rate per thousand accesses rises from 1.76 to 3.15.
+
+Per function, the map's own misses go away — `map::operator[]` −1,448,348,
+`_Rb_tree::_M_emplace_hint_unique` −608,415, `bcmp` −227,828 — and more than
+that reappears in `Interpreter::callFunction` (+2,551,914) and
+`Interpreter::executeStatement` (+2,261,354), the two functions that now touch
+the frame directly.
+
+**The mechanism is glibc's size classes, and it was measured.** In N a call
+allocates its `arguments` vector (16 bytes) and its frame's tree node (80
+bytes): two different size classes, two free lists. In D it allocates
+`arguments` (16 bytes) and the frame vector (16 bytes): **one size class, one
+tcache bin, and the two interleave.** Walking `fib(24)`'s call tree — 150,049
+calls — under each allocation pattern and counting distinct addresses the frame
+allocation is ever handed:
+
+| pattern | distinct frame blocks | distinct argument blocks |
+|---|---|---|
+| N — 16 bytes + 80 bytes | **24** | 24 |
+| D — 16 bytes + 16 bytes | **47** | 47 |
+
+One block per live recursion depth in N, roughly two in D. The frame block got
+*smaller* — 88 usable bytes to 24 — and the number of distinct lines a call
+touches roughly doubled, which is what the counter shows.
+
+**This is not something to fix.** Padding the frame vector into another size
+class would be a second change wearing D's tag, and no row would attribute it.
+It is recorded as a boundary in `docs/MEASUREMENT.md`, and it does not touch the
+attribution: `Ir` is what that rests on, 17.6 million misses stand against 11.6
+billion instructions, and the cache columns are properties of valgrind's model
+in any case.
+
+#### D changes no node, and this is the check `CLAUDE.md` requires
+
+Item 3.3 narrowed the rule to *check the allocated block, not `sizeof`*. Here
+both answers are trivial and were confirmed anyway: `src/ast.h` is
+**comment-identical** across D — the only textual difference is a note added to
+`unresolvedSlot` — and a `sizeof` probe compiled against each worktree returns
+the same fifteen numbers on both sides, `NumberNode` 48, `IdentifierNode` 56,
+`BinOpNode` 80, `Value` 16, and the rest. The slots D reads have been on the
+nodes since item 1.3, so there was nothing to grow.
+
+What did change size is the environment itself: `sizeof` goes from 48 for the
+`std::map` to 24 for the `std::vector<Value>`, so the `frames` stack reserved
+once at `maxCallDepth + 1` falls from 48,048 bytes to 24,024.
+
+#### The interaction: zero in branches for the third time, mixed in `Ir`
+
+**`branches` is identical in D's two series on all four programs** —
+−1,146,000,289, −937,274,052, −1,270,000,143, −2,827,003,339 on top of N and on
+top of A+B+C, **difference exactly zero everywhere.** That is the third
+consecutive pair to give exactly zero branch interaction, after A×B and
+C×(A+B). Three makes it a pattern rather than a coincidence: these four
+ablations remove disjoint branch traffic, and the branch column decomposes
+additively across all of them.
+
+In `Ir` the third pair does **not** repeat the first two. A×B was one
+instruction per `IdentifierNode` evaluation and C×(A+B) one per `<` evaluation,
+both positive on all four programs. D×(A+B+C) is mixed in sign and larger:
+
+| Program | interaction (`Ir`) | as a share of D's own delta |
+|---|---|---|
+| `bench/arith.algo` | **−4,000,004** | −0.10% |
+| `bench/fib32.algo` | **+56,393,243** | +1.29% |
+| `bench/loop10m.algo` | **+10,000,000** | +0.20% |
+| `bench/vars.algo` | **−2,000,093** | −0.02% |
+
+`fib32`'s is 8.00 instructions per call to within three counts
+(7,049,155 × 8 = 56,393,240), which is the frame construction and destruction
+being generated differently once the surrounding arms have shrunk. The other
+three are within about one instruction per assignment executed and go both
+ways. **Two of the four are negative**, meaning D is worth slightly *more* after
+A, B and C than it is alone — the opposite sign from the residual Phase 5
+predicts, on those two programs, at about a tenth of a percent.
+
+**Item 5.2 owns the residual** and must compute it over all four ablations;
+this is recorded here as what these rows say, and as a caution that the
+pairwise interactions are not all of one sign.
+
+#### The function sizes, for the fourth time
+
+`Interpreter::evaluate` read with `nm -S` from the kept worktree binaries.
+D is the first ablation to shrink all three of the interpreter's functions,
+because it is the only one that touches all three:
+
+| configuration | `evaluate` | `executeStatement` | `callFunction` |
+|---|---|---|---|
+| N `9407ca6` | `0xfd4` | `0xb20` | `0x924` |
+| `perf/iso-d` `f194531` | `0xd64` | `0xa70` | `0x828` |
+| `perf/cum-c` `ef4dc25` | `0x8f4` | `0x53c` | `0x7d8` |
+| `perf/cum-d` `f1b040c` (**H**) | `0x750` | `0x414` | `0x6f0` |
+
+The `0x8f4` for `perf/cum-c` reproduces the figure item 3.3 recorded, which is a
+free control on the method: a different session reading the same binary.
+
+#### Wall clock at H, which is narrative only and still worth writing down
+
+Every program is now well below item 2.2's 0.5–5 s band, which it sat inside at
+configuration N:
+
+| Program | N | H (`perf/cum-d`) | |
+|---|---|---|---|
+| `bench/arith.algo` | 849 ms | **203 ms** | 4.2× |
+| `bench/fib32.algo` | 869 ms | **431 ms** | 2.0× |
+| `bench/loop10m.algo` | 660 ms | **175 ms** | 3.8× |
+| `bench/vars.algo` | 900 ms | **95 ms** | 9.5× |
+
+The band was item 2.2's acceptance criterion for the *baseline* programs, and
+hardening the interpreter was always going to fall out of it. Nothing is
+invalidated — the wall-clock columns are narrative only and cachegrind's counts
+are exact and deterministic — but a Phase 4 session should know that the VM will
+be measured on programs that run in tenths of a second, and should not read that
+as a reason to raise any `n`. `CLAUDE.md` forbids that for a separate reason:
+one cachegrind pass over the four costs about 230 seconds.

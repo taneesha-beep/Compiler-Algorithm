@@ -454,6 +454,33 @@ Two entries already belong here and are recorded now so they are not lost:
   once A is already applied**, and if a session finds itself surprised by a small
   one, this is why. `Ir` is unaffected by any of this.
 
+  **Item 3.4 has now measured all of it, and every part of the paragraph above
+  held.** The 20-name caveat stands and must still be attached to the figure:
+  D removes **76.33%** of `bench/vars.algo`'s instructions applied to N alone and
+  **82.03%** applied on top of A, B and C, against **35.12%** on the one-name
+  frame of `bench/loop10m.algo` and **27.23%** on `bench/fib32.algo`'s one
+  parameter per call. The ratio between the extremes is the whole content of the
+  caveat, and a program declaring two names would report something near arith's
+  −27.56%.
+
+  **The 23%–56% bracket resolves above its own top end, and the reason is a
+  boundary of the method rather than of the ablation.** That bracket was built by
+  adding up cachegrind's per-function totals for the functions whose names are
+  the map. But `std::map::find` is **inlined into `Interpreter::evaluate`**, so
+  its descent loop is charged to `evaluate` and never entered the bracket at all;
+  only the out-of-line `map::operator[]` and `bcmp` did. Attribution by function
+  name has the same failure mode as attribution by source text, which is item
+  3.3's finding arriving from a second direction. **A bracket built from a
+  profile is a lower bound whenever the thing being priced can be inlined.**
+
+  **The D1 half is confirmed exactly, and the overlap is total rather than
+  partial.** Isolated, D removes 99.29% of `bench/vars.algo`'s D1 misses —
+  3,021,434 down to 21,378, the same three million ablation A removes. Applied
+  on top of A, which has already taken them, D moves **fifty-four misses,
+  −0.25%**. Two independent causes, one set of misses; the measured allocation
+  arithmetic is that a twenty-name frame is twenty separate 88-byte blocks as a
+  `std::map` and one contiguous 328-byte block as a `std::vector`.
+
 - **The length of the binary's own path moves the cache columns too, and by more
   than the environment block does.** Left by item 2.4, and it sharpens the entry
   above rather than repeating it. Item 2.3 found that the environment block
@@ -729,3 +756,109 @@ Two entries already belong here and are recorded now so they are not lost:
   matters to the cache columns only when it changes the *allocation* size, and
   `make_shared` plus glibc's 16-byte granularity means a node can grow without
   that happening. Item 3.4 should check the allocated block, not `sizeof`.
+
+- **Ablation D makes `bench/fib32.algo`'s D1 misses go UP by a third, and the
+  cause is a glibc size class rather than anything the ablation claims to do.**
+  Left by item 3.4, and measured rather than argued, in the same way item 3.3
+  settled why C's eight extra bytes moved no cache column at all.
+
+  D removes a quarter of `fib32`'s data traffic — `Dr` + `Dw` from 7,557,008,870
+  to 5,596,015,408 — and its `D1_misses` rise from 13,294,533 to **17,636,152**,
+  +32.66% isolated and +36.30% on top of A, B and C. Nothing comparable happens
+  to the other three programs, which move by single counts. The discriminator is
+  that `fib32` is the only program that pushes and pops a frame per call, 7.05
+  million times.
+
+  Per function, the map's own misses do go away — `map::operator[]` −1,448,348,
+  `_Rb_tree::_M_emplace_hint_unique` −608,415, `bcmp` −227,828 — and more than
+  that reappears in `Interpreter::callFunction` (+2,551,914) and
+  `Interpreter::executeStatement` (+2,261,354), which are the functions that
+  now touch the frame directly.
+
+  **The mechanism is that D puts two of a call's allocations into one size
+  class.** In configuration N a call allocates its `arguments` vector (16 bytes
+  requested, 24 usable) and its frame's red-black-tree node (80 requested, 88
+  usable): two size classes, two free lists, so glibc hands the frame allocation
+  the same block at each recursion depth. In D the frame is a
+  `std::vector<Value>` of one element — 16 requested, 24 usable — which is
+  *`arguments`' own size class*, so both draw on one tcache bin and interleave.
+  Walking `fib(24)`'s call tree, 150,049 calls, under each allocation pattern
+  and counting the distinct addresses the frame allocation is ever handed:
+
+  | pattern | distinct frame blocks | distinct argument blocks |
+  |---|---|---|
+  | N — 16 bytes + 80 bytes | **24** | 24 |
+  | D — 16 bytes + 16 bytes | **47** | 47 |
+
+  One per live recursion depth in N, roughly two in D. The frame block got
+  *smaller* and the number of distinct lines a call touches roughly doubled.
+
+  **Three consequences.** This is now the fourth mechanism on this list that
+  moves `D1_misses` without moving `Ir` — after the environment block,
+  `argv[0]`'s length, and node size — and the fourth independent reason the
+  attribution is stated on `Ir`. It is **not something to fix**: padding the
+  frame vector into another size class would be a second change wearing D's
+  tag, with no row to attribute it to, which is the rule items 3.1, 3.2 and 3.3
+  each applied in turn. And it is a reminder that a *smaller* allocation is not
+  automatically a better-behaved one — what the cache sees is how many distinct
+  blocks a workload cycles through, not how large each is.
+
+- **After ablation D a release build has no `undefined variable` fault, and the
+  invariant behind it is checked by an `assert` that `NDEBUG` removes from every
+  measured configuration.** Left by item 3.4. It is a boundary rather than a
+  result, and it is stated because the trade was deliberate and has a cost.
+
+  Until D, `Interpreter::evaluate` looked the name up in the environment and
+  raised a `RuntimeFault` if it was absent. The lookup was unreachable for any
+  program the resolver accepts — item 1.3 closed the last hole — and it survived
+  on two arguments: it *was* ablation D, so deleting it early would have
+  performed half the ablation; and a fault beats undefined behaviour if a later
+  item ever widens what the resolver admits. D spends the first. The second is
+  answered by moving the check to where it is free rather than by keeping it.
+
+  An `assert` is live in the default build — the one `ctest` runs, the one CI
+  compiles under GCC and Clang, the one `-DALGO_SANITIZE=ON` extends with UBSan
+  — and is compiled out of the `RelWithDebInfo` build that produces every row
+  here. Confirmed rather than assumed: both measured binaries were built with
+  `-O2 -g -DNDEBUG`, and neither contains the string `__assert_fail` or
+  `Assertion` anywhere, where the host's default build does.
+
+  **What was rejected and why.** A surviving bounds test — `at()`, or an
+  explicit range check — is a comparison and a conditional branch on the hot
+  path, present in D and absent in N, roughly one per variable access, which on
+  `bench/vars.algo` is 23 per loop iteration. D would then have removed the map
+  lookup *and* added a check, while this repository recorded only the removal.
+  That is the rule item 3.1 set choosing `const Node &` over a raw pointer.
+
+  **What is genuinely lost, stated plainly.** In an optimised build an
+  unresolved slot is now undefined behaviour where it used to be a diagnostic
+  and exit 70. Nothing can reach it today. If a later item widens the resolver,
+  the assert fires in every test on both compilers before anything ships —
+  provided a test exercises the widened case, which is the part that is not
+  automatic. In the build where it lives the assert is *stronger* than the
+  lookup it replaced: `find` could only see a name missing from the map, while
+  this also sees an unwritten slot and a slot past the end of the frame, which
+  is the failure mode a slot-indexed environment newly has and a map could not
+  have had.
+
+- **At configuration H every benchmark program falls below item 2.2's 0.5 s
+  floor, and Phase 4 will measure below it.** Left by item 3.4. Wall clock
+  best-of-ten in the container: `arith` 849 → **203 ms**, `fib32` 869 → **431
+  ms**, `loop10m` 660 → **175 ms**, `vars` 900 → **95 ms**, N against H.
+
+  The 0.5–5 s band was item 2.2's acceptance criterion for the *baseline*
+  programs, and hardening the interpreter by between 2.0× and 9.5× was always
+  going to fall out of it from below. **Nothing measured is invalidated**: the
+  wall-clock columns are narrative only, and cachegrind's counts are simulated,
+  deterministic and reproduce exactly at any program size. The floor existed to
+  keep timing noise small relative to the total, and no claim in this repository
+  rests on timing.
+
+  It is recorded because the temptation it creates is real: a Phase 4 session
+  measuring a VM on programs that finish in tenths of a second may want to raise
+  an `n` to "use the band properly". **Do not** — `CLAUDE.md` refuses it for an
+  independent reason, that one cachegrind pass over the four programs costs
+  about 230 seconds and Phase 4 adds another configuration to a series that
+  already has eleven. If a Phase 4 comparison ever needs a longer-running
+  program, that is a new benchmark with its own justification, not a larger `n`
+  on an existing one.
