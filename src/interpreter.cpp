@@ -108,7 +108,7 @@ void requireCondition(const Node &condition, const Value &value)
 
 } // namespace
 
-Value Interpreter::evaluate(Node node)
+Value Interpreter::evaluate(const Node &node)
 {
     // ON THE DISPATCH. A chain of tag comparisons, one per node type, exactly
     // as it was before the node split. `tryAs` performs the same comparison the
@@ -518,10 +518,14 @@ Flow Interpreter::executeStatement(const Node &statement)
 // two agree because both are answering "what functions does this program have",
 // which is a property of the whole file and not of a position in it.
 //
-// `executeStatement` takes its Node by reference, unlike `evaluate`. The
-// by-value pass in `evaluate` is ablation A's subject and has to stay; adding a
-// second one here would put reference-count traffic into ablation A's
-// measurement that item 3.1 was never going to remove, and inflate it.
+// `executeStatement` and `evaluate` both take their Node by reference. They did
+// not always agree, and the reason is worth keeping rather than leaving to be
+// re-derived: `executeStatement` took a reference from the start, while
+// `evaluate` took its `shared_ptr` by value because that by-value pass was
+// ablation A's entire subject. A second one here would have added
+// reference-count traffic on the statement path that item 3.1 was never going
+// to remove, inflating A's delta with a cost outside the hypothesis it tests.
+// Item 3.1 has since removed the one in `evaluate`, so the asymmetry is gone.
 void Interpreter::execute(const std::vector<Node> &statements)
 {
     // Reserved once so that pushing a frame can never move the frames already

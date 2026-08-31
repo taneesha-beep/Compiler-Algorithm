@@ -110,11 +110,31 @@ class Interpreter
     Value callFunction(const CallNode &call);
 
 public:
-    // ON THE BY-VALUE Node. `evaluate` takes its `shared_ptr` by value, so
-    // every node of every expression pays a reference-count increment and
-    // decrement. That is not an oversight: it is one of the four unforced
-    // inefficiencies the baseline is required to keep, and it is ablation A's
-    // entire subject. Do not change it to `const Node &` before item 3.1.
-    Value evaluate(Node node);
+    // ON THE `const Node &`. It was a by-value `shared_ptr` until item 3.1 —
+    // ablation A — which is the commit that changed it. Every node of every
+    // expression used to pay a reference-count increment on the way in and a
+    // decrement on the way out, and the reference those bought was never
+    // needed: the tree is owned by the statement list `main` holds across
+    // `execute`, no node is freed while it is being walked, and nothing here
+    // copies the pointer or extends its lifetime. `evaluate` only ever hands
+    // `node` to `tryAs` and reads `node->span`.
+    //
+    // A REFERENCE RATHER THAN A RAW `const ASTNode *`, deliberately. The
+    // roadmap allows either, and an ablation must remove exactly one cost.
+    // `tryAs` already takes a `const Node &`, so a reference leaves every call
+    // site, every dispatch and every field access byte-for-byte what they were
+    // and changes nothing but the reference count. A raw pointer would have
+    // removed an indirection at each `tryAs` as well, and no ablation accounts
+    // for that one.
+    //
+    // What this bought is a row, not a claim: see `results/measurements.csv`
+    // under `perf/iso-a` and `perf/cum-a`, which are two tags on this commit
+    // because the isolated and cumulative series coincide at A.
+    //
+    // The baseline's other three unforced inefficiencies are untouched — the
+    // re-parsed literal (3.2), the string-compared operator (3.3) and the
+    // string-keyed frame (3.4) — and `CLAUDE.md`'s *Do not "fix" these* still
+    // protects all three.
+    Value evaluate(const Node &node);
     void execute(const std::vector<Node> &statements);
 };
