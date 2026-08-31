@@ -40,26 +40,35 @@ namespace
 //
 // It does not distort the ablation series, for a different reason: **the cost
 // is uniform across every configuration, so it cancels in every delta.** The
-// check is in configuration N, in each of `perf/iso-a`…`perf/iso-e`, in each of
-// `perf/cum-a`…`perf/cum-e`, and in Phase 4's VM — which has to trap
-// identically or item 4.4's differential testing would be comparing two
-// languages. No ablation removes it, so it never appears as anyone's delta, and
-// a term present in both endpoints of a subtraction subtracts out.
+// check is in configuration N, in each of `perf/iso-a`…`perf/iso-d` and in each
+// of `perf/cum-a`…`perf/cum-d`. No ablation removes it, so it never appears as
+// anyone's delta, and a term present in both endpoints of a subtraction
+// subtracts out.
 //
 // What it does change is the *ratio*, and in the safe direction: a constant
-// added to both sides of N→V and H→V moves each of them toward 1, so the
-// headline speedup this project reports is understated by however much the
-// check costs, never overstated. The one place the cancellation is not exact is
-// wall-clock, where this branch competes for the same execution resources the
-// interaction residual is about; instruction counts under cachegrind cancel
-// exactly, one extra test per arithmetic operation in every configuration.
-// Phase 5.3 is where that limit gets written down.
+// added to both sides of a comparison moves it toward 1, so the headline this
+// project reports — N → H, what the four unforced costs were worth — is
+// understated by however much the check costs, never overstated. The one place
+// the cancellation is not exact is wall-clock, where this branch competes for
+// the same execution resources the interaction residual is about; instruction
+// counts under cachegrind cancel exactly, one extra test per arithmetic
+// operation in every configuration. Phase 5.3 is where that limit gets written
+// down.
 //
-// And it is deliberately **not** a sixth ablation. Every ablation A–E preserves
+// And it is deliberately **not** a fifth ablation. Every ablation A–D preserves
 // what the program computes and changes only how fast it is computed. Removing
 // this one would make arithmetic wrap — a different language, and one whose
 // results are undefined behaviour — so there is nothing honest to compare
 // against.
+//
+// TWO CORRECTIONS, made 2026-08-31. This block used to name `perf/iso-e` and
+// `perf/cum-e`, and to say the check is also in "Phase 4's VM — which has to
+// trap identically or item 4.4's differential testing would be comparing two
+// languages." **Ablation E was cut on 2026-08-30 and Phase 4 with it**, so the
+// series is A–D over eight tags and there is no VM, no configuration V and no
+// differential testing across engines. The argument itself is unaffected — the
+// check is still in every configuration that exists, so it still cancels — but
+// it now cancels in N → H rather than in N → V and H → V.
 //
 // The caret goes on the whole operation, matching what division by zero and a
 // type fault already do: neither operand is individually wrong, the result of

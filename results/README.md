@@ -213,6 +213,16 @@ Every `output` field is unchanged from N's — `24000000`, `2178309`,
 those four answers. An ablation that changed one would be visible in the row
 rather than behind an exit code.
 
+**There is no `results/ablations.csv`, and there should not be.** The roadmap's
+Phase 3 acceptance names one; these rows go here instead. A second CSV would
+fork the ledger this directory exists to keep single, and would mean two
+schemas to hold in step for the rest of Phase 3 and all of Phase 5. The `config`
+column already carries the tag name, so *a row per configuration per benchmark
+program* is satisfied exactly as written, and one `awk -F,` still reads the
+whole series. **Items 5.1 and 5.2 read `measurements.csv` and filter on
+`config`** — `perf/cum-*` for the attribution table, `perf/iso-*` and
+`v1-naive-treewalk` for the isolated deltas and the residual.
+
 **The `branches` column is what pins the attribution.** Divide the branch delta
 by the number of `evaluate` calls each program's source implies and it is
 **exactly 5.0 for all three iterative programs** — `loop10m` 30 branches per
