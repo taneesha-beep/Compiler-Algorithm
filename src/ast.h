@@ -45,10 +45,14 @@ enum class NodeType
 // tag and the span — lives in this base.
 //
 // ON THE MISSING VIRTUAL DESTRUCTOR. There is none, deliberately. A virtual
-// destructor puts a vtable pointer in every node, and both the size of a node
-// and the cost of destroying one are things Phase 3 measures: ablation E
-// allocates nodes from an arena, where per-node virtual dispatch on destruction
-// is exactly the cost being removed. Deleting through `shared_ptr<ASTNode>` is
+// destructor puts a vtable pointer in every node, and node size is something no
+// ablation in the series accounts for. It was ablation E — arena-allocating the
+// nodes, where per-node virtual dispatch on destruction is exactly the cost
+// being removed — that would have priced it, and **E was cut on 2026-08-30**,
+// so nothing measures node layout at all now. That makes the argument stronger
+// rather than weaker: a size change here has no row to be attributed to. Item
+// 3.2 grew `NumberNode` by eight bytes and could not avoid it; see the note
+// there. Deleting through `shared_ptr<ASTNode>` is
 // nevertheless safe, because a `shared_ptr` captures its deleter from the
 // concrete type at construction and does not consult the static type when the
 // count reaches zero. Every node here is built by `makeNode`, which calls

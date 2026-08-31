@@ -52,11 +52,14 @@ bool startsExpression(TokenType type)
 // The digits of a NUMBER token, as the integer they denote.
 //
 // ON WHY THIS IS HERE AND NOT IN THE INTERPRETER. Until item 3.2 the walk
-// called `std::stoll(number->text)` every time a literal node was evaluated —
-// in `bench/fib32.algo`, hundreds of millions of re-parses of the same handful
-// of constants. That was ablation B's entire subject, and this function is
-// what removed it: the conversion happens once per literal in the source
-// rather than once per evaluation of it.
+// called `std::stoll(number->text)` every time a literal node was evaluated:
+// 14,098,309 times in `bench/fib32.algo`, 20,000,001 in `bench/loop10m.algo`
+// and 32,000,001 in `bench/arith.algo`, always over the same handful of
+// constants. That was ablation B's entire subject, and this function is what
+// removed it — the conversion happens once per literal in the *source* rather
+// than once per evaluation of it. Those three counts are what the source
+// implies, and `results/README.md`'s item-3.2 section is where the branch
+// counter confirms them.
 //
 // ON `stoll` RATHER THAN `stoi`. Item 1.5 widened the value's integer arm to
 // `std::int64_t`, and `std::stoi` returns an `int` — leaving it would have
