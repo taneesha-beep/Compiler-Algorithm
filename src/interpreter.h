@@ -131,10 +131,11 @@ public:
     // under `perf/iso-a` and `perf/cum-a`, which are two tags on this commit
     // because the isolated and cumulative series coincide at A.
     //
-    // The baseline's other three unforced inefficiencies are untouched — the
-    // re-parsed literal (3.2), the string-compared operator (3.3) and the
-    // string-keyed frame (3.4) — and `CLAUDE.md`'s *Do not "fix" these* still
-    // protects all three.
+    // The re-parsed literal went next, at item 3.2: `NumberNode` now carries
+    // the integer its digits denote, converted once by the parser. Two of the
+    // baseline's unforced inefficiencies are left untouched — the
+    // string-compared operator (3.3) and the string-keyed frame (3.4) — and
+    // `CLAUDE.md`'s *Do not "fix" these* still protects both.
     Value evaluate(const Node &node);
     void execute(const std::vector<Node> &statements);
 };

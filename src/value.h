@@ -37,7 +37,8 @@ enum class ValueType
 //     built its literals with `std::stoi`, which cannot produce a value this
 //     arm is now wide enough to hold, so the arm and the literal parser had to
 //     widen together or the language would have stayed 32-bit behind a 64-bit
-//     value. See the note on `std::stoll` in `src/interpreter.cpp`.
+//     value. See the note on `std::stoll` above `integerValueOf` in
+//     `src/parser.cpp`, which is where item 3.2 moved that conversion.
 //
 // The live union member is the one `type` names; reading the other is undefined
 // behaviour, so every read below goes through `isInt` / `isBool` first.

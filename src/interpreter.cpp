@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
-#include <stdexcept>
 
 #include "diagnostic.h"
 
@@ -127,50 +126,19 @@ Value Interpreter::evaluate(const Node &node)
     // Phase 3 would have no row to attribute it to.
     if (const NumberNode *number = tryAs<NumberNode>(node))
     {
-        // ON THE CLASSIFICATION. A literal too wide for the value type is a
-        // property of the token's text, not of anything the program computes,
-        // so it is a *compile-time* error (65) even though it is detected here,
-        // while the tree is being walked. Item 3.2 moves the detection to parse
-        // time; classing it as a runtime fault today would make 3.2 flip the
-        // observable exit code 70 -> 65 in the middle of the ablation series,
-        // which is exactly the contamination this project exists to avoid. The
-        // exit code is fixed now so that 3.2 changes only when the check runs.
+        // ON WHAT USED TO BE HERE. Until item 3.2 this arm called
+        // `std::stoll(number->text)`, re-parsing the same digits on every
+        // visit, and raised the out-of-range diagnostic from inside the walk.
+        // That re-parse was ablation B, and both halves of it now live in
+        // `integerValueOf` in `src/parser.cpp`, which runs once per literal in
+        // the source. The node still carries its digits; nothing on this path
+        // reads them.
         //
-        // ON `stoll` RATHER THAN `stoi`. Item 1.5 widened the value's integer
-        // arm to `std::int64_t`, and `std::stoi` returns an `int` — leaving it
-        // here would have given the language a 64-bit value type that could
-        // not hold a literal past 2147483647, which is a 32-bit language with
-        // extra padding. This is the one place the plan's "widening the arm
-        // touches nothing else" was not true.
-        //
-        // What did NOT change is *when* this runs. The digits are still stored
-        // as text on the node and re-parsed on every evaluation, which is
-        // ablation B's entire subject; item 3.2 is what moves the parse — and
-        // this range check with it — to parse time. Doing that here would
-        // perform ablation B with nothing recording what it bought.
-        static_assert(std::numeric_limits<long long>::max() ==
-                          std::numeric_limits<std::int64_t>::max() &&
-                      std::numeric_limits<long long>::min() ==
-                          std::numeric_limits<std::int64_t>::min(),
-                      "stoll's range must be exactly the value arm's, or a "
-                      "literal between the two would truncate silently "
-                      "instead of being reported as out of range");
-        try
-        {
-            return Value::fromInt(std::stoll(number->text));
-        }
-        catch (const std::out_of_range &)
-        {
-            throw CompileError(Diagnostic{
-                Severity::Error, number->span,
-                "integer literal out of range: " + number->text});
-        }
-        catch (const std::invalid_argument &)
-        {
-            throw CompileError(Diagnostic{
-                Severity::Error, number->span,
-                "invalid integer literal: " + number->text});
-        }
+        // What this bought is a row, not a claim: see
+        // `results/measurements.csv` under `perf/iso-b` and `perf/cum-b`,
+        // which — unlike A's two tags — are two different commits, because the
+        // isolated and cumulative series diverge here.
+        return Value::fromInt(number->value);
     }
     if (const BooleanNode *boolean = tryAs<BooleanNode>(node))
     {

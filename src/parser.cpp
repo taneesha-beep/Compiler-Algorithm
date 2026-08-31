@@ -1,5 +1,10 @@
 #include "parser.h"
 
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <string>
+
 #include "diagnostic.h"
 
 namespace
@@ -41,6 +46,62 @@ bool startsExpression(TokenType type)
         return true;
     default:
         return false;
+    }
+}
+
+// The digits of a NUMBER token, as the integer they denote.
+//
+// ON WHY THIS IS HERE AND NOT IN THE INTERPRETER. Until item 3.2 the walk
+// called `std::stoll(number->text)` every time a literal node was evaluated —
+// in `bench/fib32.algo`, hundreds of millions of re-parses of the same handful
+// of constants. That was ablation B's entire subject, and this function is
+// what removed it: the conversion happens once per literal in the source
+// rather than once per evaluation of it.
+//
+// ON `stoll` RATHER THAN `stoi`. Item 1.5 widened the value's integer arm to
+// `std::int64_t`, and `std::stoi` returns an `int` — leaving it would have
+// given the language a 64-bit value type that could not hold a literal past
+// 2147483647, which is a 32-bit language with extra padding. The `static_assert`
+// is what keeps the two ranges welded together.
+//
+// ON THE CLASSIFICATION, WHICH DID NOT MOVE WITH THE CHECK. A literal too wide
+// for the value type is a property of the token's text, not of anything the
+// program computes, so it was already a *compile-time* error (65) back when it
+// was detected during the walk. Item 3.2 changed only *when* the check runs,
+// and deliberately not what the caller sees: a class change here would have
+// flipped the observable exit code in the middle of the ablation series.
+// `tests/diagnostic_test.cpp` pins the class, the message and the caret.
+//
+// WHAT DID CHANGE IS WHICH PROGRAMS ARE REJECTED. The check used to fire only
+// if the literal was reached; it now fires on every literal in the file. A
+// program with an out-of-range literal inside a function nobody calls used to
+// run, and is now a compile error — strictly more programs rejected, and no
+// program that still compiles behaves differently.
+// `tests/error_overflow_unreached.algo` is the case that pins it.
+std::int64_t integerValueOf(const Token &number)
+{
+    static_assert(std::numeric_limits<long long>::max() ==
+                      std::numeric_limits<std::int64_t>::max() &&
+                  std::numeric_limits<long long>::min() ==
+                      std::numeric_limits<std::int64_t>::min(),
+                  "stoll's range must be exactly the value arm's, or a "
+                  "literal between the two would truncate silently "
+                  "instead of being reported as out of range");
+    try
+    {
+        return std::stoll(number.value);
+    }
+    catch (const std::out_of_range &)
+    {
+        throw CompileError(Diagnostic{
+            Severity::Error, number.span,
+            "integer literal out of range: " + number.value});
+    }
+    catch (const std::invalid_argument &)
+    {
+        throw CompileError(Diagnostic{
+            Severity::Error, number.span,
+            "invalid integer literal: " + number.value});
     }
 }
 
@@ -316,7 +377,11 @@ Node Parser::parsePrimary()
     if (current().type == TokenType::NUMBER)
     {
         Token number = consume();
-        return makeNode<NumberNode>(number.span, number.value);
+        // The digits settle here, at parse time, the same way `true` and
+        // `false` settle just below — see `integerValueOf`. The node keeps its
+        // text as well, for the diagnostics that quote it.
+        return makeNode<NumberNode>(number.span, number.value,
+                                    integerValueOf(number));
     }
     if (current().type == TokenType::BOOLEAN)
     {

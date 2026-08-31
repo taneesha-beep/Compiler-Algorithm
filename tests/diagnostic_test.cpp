@@ -451,11 +451,12 @@ void everyErrorSiteCarriesARealSpan()
 }
 
 // ON WHY THIS IS A TEST. The class an error is thrown as decides the process
-// exit code, and item 3.2 moves the out-of-range check from evaluation time to
-// parse time. If that move also changed the class, the observable exit code
-// would shift 65 -> 70 or back in the middle of the ablation series and the
-// measurement would be comparing two different programs. These checks pin the
-// classification so that 3.2 changes only when the check runs, not what the
+// exit code, and item 3.2 moved the out-of-range check from evaluation time to
+// parse time. Had that move also changed the class, the observable exit code
+// would have shifted 65 -> 70 or back in the middle of the ablation series and
+// the measurement would have been comparing two different programs. These
+// checks pinned the classification across the move, and go on pinning it for
+// ablations C and D: what changed at 3.2 is when the check runs, not what the
 // caller sees.
 void theExitCodeClassificationIsPinned()
 {
