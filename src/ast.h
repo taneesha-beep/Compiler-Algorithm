@@ -73,6 +73,12 @@ using Node = std::shared_ptr<ASTNode>;
 // of them, and one still holding it after the pass is a hole in that walk —
 // which is what `tests/resolver_test.cpp` asserts against, since a slot is not
 // visible in anything the program prints.
+//
+// Since item 3.4 it is also what the interpreter would index the frame by, so
+// a hole is undefined behaviour rather than a wrong answer. The `assert` in
+// `evaluate`'s `IdentifierNode` arm is the second guard on that, live in every
+// build the tests run under; the argument for why an assert rather than a
+// branch is in `src/interpreter.cpp` beside it.
 inline constexpr int unresolvedSlot = -1;
 
 // A `span` is the first parameter of every constructor below, and none of them
@@ -128,13 +134,19 @@ struct IdentifierNode : ASTNode
     std::string name;
 
     // The variable's slot within its enclosing function frame, written by the
-    // resolver in item 1.3. Nothing reads it yet, deliberately: the interpreter
-    // still looks `name` up in a std::map keyed on the string, which is the
-    // ordered-map lookup ablation D exists to remove. Item 3.4 is the commit
-    // that starts reading this field, and the difference that makes is the
-    // number ablation D reports. Writing the slot here and spending it there is
-    // the whole arrangement — a 1.3 that also switched the environment over
-    // would have performed the ablation with nothing measuring it.
+    // resolver in item 1.3 and read by the interpreter since item 3.4. Between
+    // those two items it was written and read by nothing, deliberately: the
+    // interpreter went on looking `name` up in a `std::map` keyed on the
+    // string, which is the ordered-map lookup ablation D exists to remove, and
+    // a 1.3 that had also switched the environment over would have performed
+    // that ablation with nothing measuring it. Item 3.4 is the commit that
+    // spends the field, and the difference it made is the number D reports —
+    // `results/measurements.csv`, `perf/iso-d` and `perf/cum-d`.
+    //
+    // `name` is still here and is not the hot path any more. Four diagnostics
+    // in `src/resolver.cpp` quote it, and dropping it would change node size,
+    // which no ablation in the series accounts for — the same reason
+    // `NumberNode` keeps its digits and `BinOpNode` keeps its operator text.
     int slot = unresolvedSlot;
 
     IdentifierNode(Span span, std::string name)
@@ -249,9 +261,10 @@ struct AssignNode : ASTNode
 
     // The slot this assignment writes — the same field as on IdentifierNode
     // and for the same reason. An assignment target is a variable reference
-    // too, and item 3.4 has to index the environment to write a variable as
-    // well as to read one; if only reads carried a slot, that ablation would be
-    // half applied and its number would mean half of what it says.
+    // too, and item 3.4 indexes the environment to write a variable as well as
+    // to read one; if only reads had carried a slot, that ablation would have
+    // been half applied and its number would have meant half of what it says.
+    // `executeStatement`'s `AssignNode` arm is where this is read.
     int slot = unresolvedSlot;
 
     AssignNode(Span span, std::string name, Node value)
@@ -319,9 +332,13 @@ struct Parameter
     Span span;
 
     // The parameter's slot in the function's own frame, written by the
-    // resolver. Read by nothing until item 3.4, exactly as `IdentifierNode`'s
-    // is — binding an argument is a write to a variable, so ablation D has to
-    // index it on the same terms as every other write.
+    // resolver and read since item 3.4, exactly as `IdentifierNode`'s is —
+    // binding an argument is a write to a variable, so ablation D indexes it on
+    // the same terms as every other write. `callFunction` is where. This was
+    // the third of D's four sites and the easiest to overlook: an ablation that
+    // moved the two `evaluate`/`executeStatement` sites and still bound
+    // arguments by name would have left a string-keyed insertion on the call
+    // path of every recursive program.
     int slot = unresolvedSlot;
 };
 
@@ -348,7 +365,11 @@ struct FunctionNode : ASTNode
     // How many slots this function's frame needs, written by the resolver.
     // The counterpart of `resolve()`'s return value, which reports the same
     // number for the program's own frame. Item 3.4 is what sizes a per-call
-    // environment with it; nothing reads it before then.
+    // environment with it, in `Interpreter::callFunction`; it was read by
+    // nothing before then. The width counts every variable the body declares
+    // rather than the depth of its deepest scope, because the resolver does not
+    // hand a slot back when a scope closes — which is what lets one flat vector
+    // stand in for the stack of scopes the resolver walked.
     int frameSize = 0;
 
     FunctionNode(Span span, std::string name, Span nameSpan,

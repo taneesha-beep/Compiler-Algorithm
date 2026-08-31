@@ -20,16 +20,20 @@
 //
 // It assigns every variable a slot index within its enclosing function frame,
 // writing that integer onto each node that names the variable — an identifier,
-// an assignment target, and since item 1.4 a parameter. Nothing reads those
-// slots yet. The interpreter goes on looking each name up in a
-// `std::map<std::string, Value>`, which is the ordered-map lookup ablation D
-// exists to remove; item 3.4 is the commit that spends the slots, replacing
-// that map with a vector indexed directly, and reports what the change bought.
-// Writing them here and reading them there is deliberate — see the note in
-// `src/ast.h` on `IdentifierNode::slot`.
+// an assignment target, and since item 1.4 a parameter. **Since item 3.4 the
+// interpreter reads all three.** Between items 1.3 and 3.4 nothing did: the
+// interpreter went on looking each name up in a `std::map<std::string, Value>`,
+// which is the ordered-map lookup ablation D exists to remove, and 3.4 is the
+// commit that spent the slots by replacing that map with a vector indexed
+// directly. Writing them here and reading them there was deliberate — a
+// resolver that had also switched the environment over would have performed
+// the ablation with nothing measuring it. See the note in `src/ast.h` on
+// `IdentifierNode::slot`.
 //
 // And it records how wide each frame is: `FunctionNode::frameSize` for a
-// function's own, and this function's return value for the program's. Those
-// are the sizes item 3.4 will give its vectors. Today only `--trace` and the
-// unit tests read either.
+// function's own, and this function's return value for the program's. Those are
+// the sizes the interpreter gives its frame vectors — `callFunction` reads the
+// first and `execute` takes the second as a parameter, which is why `main.cpp`
+// keeps this return value rather than only narrating it. `--trace` and the unit
+// tests read them too.
 int resolve(const std::vector<Node> &statements);

@@ -127,8 +127,9 @@ int main(int argc, char *argv[])
 
         // Stage 3: Resolution — scopes checked, calls checked against the
         // functions that exist, and a frame slot written onto every variable
-        // reference. The slot count is narration only until item 3.4, which is
-        // what sizes an environment with it.
+        // reference. Since item 3.4 the slot count is not narration: it is the
+        // width of the program's own frame, and `execute` sizes that frame
+        // with it. A function's own width travels on its node instead.
         const int slots = resolve(ast);
         if (trace)
         {
@@ -150,7 +151,7 @@ int main(int argc, char *argv[])
 
         // Stage 4: Execute — the only stage that writes to stdout
         Interpreter interpreter;
-        interpreter.execute(ast);
+        interpreter.execute(ast, slots);
     }
     catch (const CompileError &e)
     {

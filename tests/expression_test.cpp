@@ -488,9 +488,9 @@ std::string faultMessage(const std::string &source)
     {
         Parser parser(lex(source));
         std::vector<Node> ast = parser.parse();
-        resolve(ast);
+        const int slots = resolve(ast);
         Interpreter interpreter;
-        interpreter.execute(ast);
+        interpreter.execute(ast, slots);
     }
     catch (const DiagnosticError &e)
     {

@@ -1,5 +1,6 @@
 #include "interpreter.h"
 
+#include <cassert>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -161,37 +162,68 @@ Value Interpreter::evaluate(const Node &node)
     }
     if (const IdentifierNode *identifier = tryAs<IdentifierNode>(node))
     {
-        // ON WHY THIS CANNOT FIRE. It was reachable between items 1.2 and
-        // 1.3: the flat semantic check of the day held one set of names and did
-        // not know that a block might not run, so a variable first assigned
-        // inside an `if` or a `while` body passed it and was still absent here
-        // when the body had not executed. Item 1.3's resolver closed that.
+        // ON WHY AN UNWRITTEN SLOT CANNOT REACH THIS. The hazard was reachable
+        // between items 1.2 and 1.3: the flat semantic check of the day held
+        // one set of names and did not know that a block might not run, so a
+        // variable first assigned inside an `if` or a `while` body passed it
+        // and was still absent here when the body had not executed. Item 1.3's
+        // resolver closed that.
         //
-        // For any program the resolver accepted, the name is in the map by the
-        // time this runs. The resolver accepts a use only if some assignment
-        // declared the name earlier in the source *and* in a scope enclosing
-        // the use — and a statement in an enclosing scope that stands earlier
-        // in that scope's statement list has already executed whenever a
-        // statement after it is executing. Nothing removes an entry from the
-        // map, so the assignment's write is still there.
-        //
-        // The lookup stays, for two reasons. It is what ablation D removes —
-        // `find` against an ordered map keyed on std::string is the cost item
-        // 3.4 measures, so deleting it here would quietly perform half of that
-        // ablation. And a fault beats undefined behaviour if a later item ever
-        // widens what the resolver admits.
+        // For any program the resolver accepted, this slot was written at
+        // resolution and the frame standing here is wide enough to hold it.
+        // The resolver accepts a use only if some assignment declared the name
+        // earlier in the source *and* in a scope enclosing the use — and a
+        // statement in an enclosing scope that stands earlier in that scope's
+        // statement list has already executed whenever a statement after it is
+        // executing. A closing scope does not hand its slot back, so nothing
+        // else can have taken it and the assignment's write is still there.
         //
         // Item 1.4 narrowed what has to be argued rather than widening it. A
         // name inside a function body resolves against that function's frame
         // and no other — the resolver's lookup stops at the frame boundary —
-        // so the environment this searches is the one the resolver decided the
-        // name belonged to, and the argument above applies within it unchanged.
+        // so the frame this indexes is the one the resolver numbered the name
+        // into, and the argument above applies within it unchanged.
+        //
+        // ON WHAT REPLACED THE `undefined variable` FAULT, which stood here
+        // until item 3.4 and was every bit as unreachable as the paragraphs
+        // above say. It survived that long for two reasons, and 3.4 spends the
+        // first: the `find` against a string-keyed ordered map *was* ablation
+        // D, so deleting it early would have performed half of that ablation
+        // with nothing recording what it bought. The second reason — a fault
+        // beats undefined behaviour if a later item ever widens what the
+        // resolver admits — outlives the first, and is answered by an `assert`
+        // rather than by a branch.
+        //
+        // **The assert is live exactly where it is free.** The default build
+        // sets no `CMAKE_BUILD_TYPE`, so `NDEBUG` is not defined in it: that
+        // is the build `ctest` runs, the build CI compiles under both GCC and
+        // Clang, and the build `-DALGO_SANITIZE=ON` adds UBSan to. The
+        // benchmarks are `RelWithDebInfo`, which does define `NDEBUG`, so the
+        // configuration that takes the rows compiles this away entirely. The
+        // invariant is therefore checked on every variable access of all 33
+        // tests on both compilers, and ablation D pays nothing for it.
+        //
+        // **A surviving bounds test was rejected, and this is the reason.** An
+        // `at()` or an explicit range check would be a comparison and a
+        // conditional branch on the hot path, present in D and absent in N —
+        // roughly one per variable access, which on `bench/vars.algo` is 23
+        // per loop iteration. D would then remove the map lookup *and* add a
+        // check, while this repository recorded only the removal. That is
+        // item 3.1's rule — remove exactly the named cost and nothing else —
+        // and it is the same call 3.1 made choosing `const Node &` over a raw
+        // pointer and 3.2 made keeping `NumberNode::text`.
+        //
+        // **And it is strictly stronger than the lookup it replaces**, in the
+        // build where it lives. `find` could only see a name missing from the
+        // map. This sees an `unresolvedSlot` the resolver failed to write, and
+        // a slot past the end of the frame — a frame the resolver numbered or
+        // sized wrongly, which the map could not have noticed at all, and
+        // which is precisely the failure mode a slot-indexed environment
+        // newly has.
         Environment &environment = frames.back();
-        if (environment.find(identifier->name) == environment.end())
-            throw RuntimeFault(Diagnostic{
-                Severity::Error, identifier->span,
-                "undefined variable '" + identifier->name + "'"});
-        return environment[identifier->name];
+        assert(identifier->slot >= 0 &&
+               static_cast<std::size_t>(identifier->slot) < environment.size());
+        return environment[static_cast<std::size_t>(identifier->slot)];
     }
     if (const BinOpNode *binary = tryAs<BinOpNode>(node))
     {
@@ -392,12 +424,42 @@ Value Interpreter::callFunction(const CallNode &call)
         ~FramePopper() { frames.pop_back(); }
     };
 
-    frames.emplace_back();
+    // Sized once, from the width the resolver wrote onto this function — which
+    // is what `FunctionNode::frameSize` has existed for since item 1.3 and
+    // what item 3.4 spends. The resolver does not hand a slot back when a
+    // scope closes, so the width is the number of variables the body declares
+    // rather than the depth of its deepest scope, and a slot stays valid for
+    // the whole call; nothing here ever resizes this vector, which is what
+    // makes that property load-bearing rather than incidental.
+    //
+    // `Value` has a trivial default constructor, so these elements are
+    // value-initialised to `{Int, 0}`. That is deliberate and not merely
+    // tolerated: reading a slot before its assignment would see the integer 0
+    // rather than an indeterminate union member, which is undefined behaviour
+    // the sanitizer build would be right to trap. No program can do it — the
+    // paragraphs above the `IdentifierNode` arm are that argument — so this is
+    // the belt beside that brace, not a semantic the language relies on.
+    frames.emplace_back(static_cast<std::size_t>(function.frameSize));
     FramePopper popper{frames};
 
-    // The resolver has already checked that these two counts agree.
+    // The resolver has already checked that these two counts agree, and it
+    // numbered the parameters into the frame's outermost scope before walking
+    // the body, so their slots are the first ones in the frame.
+    //
+    // **Binding an argument is a write to a variable**, which is why
+    // `Parameter` carries a slot at all and why this line is one of the four
+    // ablation D had to move. A version that indexed the two `evaluate` and
+    // `executeStatement` sites and still bound arguments by name would have
+    // left a string-keyed insertion on the call path of every recursive
+    // benchmark — half the ablation, priced as the whole of it, with
+    // `bench/fib32.algo` paying for the half that was left.
     for (std::size_t i = 0; i < arguments.size(); i++)
-        frames.back()[function.parameters[i].name] = arguments[i];
+    {
+        const int slot = function.parameters[i].slot;
+        assert(slot >= 0 &&
+               static_cast<std::size_t>(slot) < frames.back().size());
+        frames.back()[static_cast<std::size_t>(slot)] = arguments[i];
+    }
 
     // ON WHAT A FUNCTION WITHOUT A RETURN HANDS BACK: the integer 0, both for
     // the bare `return` and for a body that runs off its end.
@@ -420,15 +482,25 @@ Value Interpreter::callFunction(const CallNode &call)
 // ON RUN-TIME SCOPE. A block still groups statements and nothing more: it does
 // not push an environment, and scope inside a frame is entirely the resolver's
 // business — by the time a program reaches this file, every name it can still
-// mention refers to exactly one variable of its frame, so a flat map answers
-// every lookup within that frame the way a stack of them would.
+// mention refers to exactly one variable of its frame, so a flat frame answers
+// every lookup within it the way a stack of scopes would.
+//
+// Item 3.4 made that sentence load-bearing rather than merely true. The
+// resolver numbers a frame's variables from zero and **never reuses a number
+// when a scope closes**, so the inner `x` of a block and the outer `x` are two
+// slots, not one — which is exactly what lets a single flat vector stand in
+// for the stack of scopes the resolver walked. Reuse would have saved a few
+// words per frame and made a live slot alias a dead one; `declareOrBind` in
+// `src/resolver.cpp` says so, and this is the code that depends on it.
 //
 // What item 1.4 changed is the *frame*, not the scope. Recursion makes one
 // environment for the whole program wrong rather than merely slow: `fib(n)`
-// calling `fib(n - 1)` needs two live `n`s, and one map has room for one. So
-// there is a map per call, on a stack. It is still an ordered map keyed on
-// `std::string`, which is the point — see the note on the environment in
-// `interpreter.h` for why ablation D needs it to stay one.
+// calling `fib(n - 1)` needs two live `n`s, and one frame has room for one. So
+// there is an environment per call, on a stack. Since item 3.4 that
+// environment is a `std::vector<Value>` indexed by slot rather than an ordered
+// map keyed on `std::string` — see the note on the environment in
+// `interpreter.h` for what that ablation removed and what it deliberately did
+// not touch.
 //
 // ON HOW `return` UNWINDS. It is a flag returned up the statement walk: every
 // statement says whether it ran or returned, and a block, an `if` and a
@@ -459,9 +531,20 @@ Flow Interpreter::executeStatement(const Node &statement)
         // that neither the order nor the frame the write lands in depends on
         // how the compiler sequences one expression: evaluating the value may
         // enter and leave any number of calls, and the frame it is stored into
-        // is the one standing after all of them.
+        // is the one standing after all of them. Since item 3.4 the frame is
+        // read back *after* the evaluation for the same reason — a reference
+        // taken before it could be left dangling by a call that pushed frames.
+        //
+        // The write side of ablation D. Where this said
+        // `frames.back()[assign->name] = value` it built or found a
+        // red-black-tree node keyed on the name; it now stores into the slot
+        // the resolver assigned. The assert is the one above the
+        // `IdentifierNode` arm, for the reasons argued there.
         Value value = evaluate(assign->value);
-        frames.back()[assign->name] = value;
+        Environment &environment = frames.back();
+        assert(assign->slot >= 0 &&
+               static_cast<std::size_t>(assign->slot) < environment.size());
+        environment[static_cast<std::size_t>(assign->slot)] = value;
         return Flow::Normal;
     }
     if (const PrintNode *print = tryAs<PrintNode>(statement))
@@ -545,15 +628,24 @@ Flow Interpreter::executeStatement(const Node &statement)
 // reference-count traffic on the statement path that item 3.1 was never going
 // to remove, inflating A's delta with a cost outside the hypothesis it tests.
 // Item 3.1 has since removed the one in `evaluate`, so the asymmetry is gone.
-void Interpreter::execute(const std::vector<Node> &statements)
+void Interpreter::execute(const std::vector<Node> &statements, int frameSize)
 {
     // Reserved once so that pushing a frame can never move the frames already
     // on the stack. Nothing here holds a reference across a call, but a
     // reallocation in the middle of one is the kind of bug that would appear
     // only at a particular depth, and the bound is known: the call-depth limit
-    // is what makes it known.
+    // is what makes it known. Since item 3.4 an `Environment` is a
+    // `std::vector<Value>` rather than a `std::map`, so this block is smaller
+    // than it was — the elements it reserves are three words each instead of
+    // six — and the argument for reserving it is unchanged.
     frames.reserve(static_cast<std::size_t>(maxCallDepth) + 1);
-    frames.emplace_back();
+
+    // The program's own frame, sized from `resolve()`'s return value the way a
+    // function's is sized from `FunctionNode::frameSize`. `main.cpp` has
+    // captured that number since item 1.3 and printed it under `--trace`;
+    // item 3.4 is what spends it. A top-level program that declares nothing
+    // gets an empty vector, which allocates nothing.
+    frames.emplace_back(static_cast<std::size_t>(frameSize));
 
     for (const Node &statement : statements)
         if (const FunctionNode *function = tryAs<FunctionNode>(statement))

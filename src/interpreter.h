@@ -67,36 +67,61 @@ enum class Flow
 
 class Interpreter
 {
-    // ON THE ENVIRONMENT. One ordered map keyed on `std::string` per call,
-    // held on a stack of them, and every part of that is deliberate.
+    // ON THE ENVIRONMENT. One `std::vector<Value>` per call, indexed by the
+    // frame slot the resolver assigned, held on a stack of them.
     //
     // It is *per call* because item 1.4 makes recursion expressible and one
-    // flat map cannot hold it: `fib(n)` calling `fib(n - 1)` would find a
+    // flat frame cannot hold it: `fib(n)` calling `fib(n - 1)` would find a
     // single shared `n`, and the inner call's binding would destroy the outer
     // one's. Every call therefore gets its own environment and drops it on the
     // way out, which is what makes each activation's parameters its own.
     //
-    // It is still *an ordered map keyed on a string* because that is ablation
-    // D's subject, and D has to stay the same experiment it was described as:
-    // "string-keyed map -> slot-indexed vector". The resolver has already
-    // written a frame slot onto every variable reference and a frame width
-    // onto every function, and item 3.4 is the commit that spends them, by
-    // making each of these frames a `std::vector` indexed by slot. Turning one
-    // into a vector now would be performing that ablation with nothing
-    // recording what it bought. See the note in `src/ast.h` on
-    // `IdentifierNode::slot`.
+    // It is *a vector indexed by slot* since item 3.4 — ablation D, and the
+    // last of the baseline's four unforced inefficiencies. Until then it was a
+    // `std::map<std::string, Value>` and a variable access was `find` against
+    // an ordered map: O(log n) comparisons of `std::string`, where n is the
+    // number of variables the enclosing function declares. The resolver has
+    // written a slot onto every `IdentifierNode`, every `AssignNode` and every
+    // `Parameter` since item 1.3, and a width onto every `FunctionNode`, and
+    // item 3.4 is the commit that spends all four — because binding an
+    // argument is a write to a variable, and an ablation that indexed only the
+    // reads would be half applied and its number would mean half of what it
+    // says. See the note in `src/ast.h` on `IdentifierNode::slot`.
     //
     // The stack itself is common to both sides of that ablation — a per-call
-    // vector needs exactly the same stack a per-call map does — so it changes
-    // what D starts from without changing what D measures.
-    using Environment = std::map<std::string, Value>;
+    // vector needs exactly the same stack a per-call map did — so it changed
+    // what D started from without changing what D measured.
+    //
+    // What this bought is a row, not a claim: see `results/measurements.csv`
+    // under `perf/iso-d` and `perf/cum-d`, which are two different commits,
+    // and the second of which is configuration **H**, the hardened
+    // tree-walker Phase 4's VM is compared against.
+    using Environment = std::vector<Value>;
     std::vector<Environment> frames; // the program's own frame is frames[0]
 
     // Every function the program declares, by name. Functions are not values,
     // so this is a namespace of its own rather than anything a variable could
-    // hold, and a call reaches it by the name the parser recorded — the same
-    // string lookup a variable takes, and for the same reason: replacing it
-    // with an index is Phase 4's work, not a Phase 1 optimisation.
+    // hold, and a call reaches it by the name the parser recorded.
+    //
+    // ON WHY THIS MAP DID NOT MOVE AT ITEM 3.4. It is the same container the
+    // environment was and it is looked up the same way, so converting it in
+    // the same commit would have been the easy thing to do. It is not ablation
+    // D. The roadmap defines D as *"variable access is `variables.find(...)`
+    // against `std::map<std::string, int>`"* and `CLAUDE.md`'s protected
+    // bullet as *"the environment is a `std::map<std::string, Value>` looked
+    // up by name"* — both name the frame, and the frame is what moved.
+    // Converting this one alongside it would have folded a second change into
+    // D's tag with no row to attribute it to, so `perf/iso-d` and `perf/cum-d`
+    // would price two removals and this ledger would record one. That is the
+    // failure item 3.1 refused when it chose `const Node &` over a raw
+    // pointer, and item 3.2 refused when it kept `NumberNode::text`.
+    //
+    // It is also a much smaller cost than the one D removes: a function is
+    // looked up once per *call*, where a variable is looked up several times
+    // per loop iteration, and the resolver has already assigned no index for
+    // it to use. Giving calls an index is Phase 4's work — the VM resolves a
+    // callee at compile time — and if it is ever wanted in the tree-walker it
+    // is a change to make deliberately, with a measurement of its own.
     std::map<std::string, const FunctionNode *> functions;
 
     // Where a `return` leaves its value for the call that is waiting on it.
@@ -134,9 +159,11 @@ public:
     // The re-parsed literal went next, at item 3.2: `NumberNode` now carries
     // the integer its digits denote, converted once by the parser. The
     // string-compared operator went at item 3.3: both operator arms `switch` on
-    // an enumerator the parser writes onto the node. **One of the baseline's
-    // four unforced inefficiencies is left** — the string-keyed frame, ablation
-    // D, item 3.4 — and `CLAUDE.md`'s *Do not "fix" these* still protects it.
+    // an enumerator the parser writes onto the node. The string-keyed frame
+    // went at item 3.4: each frame is a `std::vector<Value>` indexed by the
+    // slot the resolver assigned. **All four of the baseline's unforced
+    // inefficiencies are now spent**, `CLAUDE.md`'s *Do not "fix" these* list
+    // has nothing live left on it, and `perf/cum-d` is configuration H.
     //
     // Item 3.3 is worth one more line here, because its row says something the
     // other two do not. It removed between 0.05% and 1.34% of instructions and
@@ -147,5 +174,13 @@ public:
     // describes and the dispatch the processor runs were not the same dispatch.
     // `docs/MEASUREMENT.md`'s *Boundary of the claim* carries the disassembly.
     Value evaluate(const Node &node);
-    void execute(const std::vector<Node> &statements);
+
+    // `frameSize` is how many slots the program's own frame needs, which is
+    // what `resolve()` returns — see `src/resolver.h`. It is a parameter
+    // rather than something recomputed here because the resolver is the only
+    // thing that knows: it numbered those slots, and it does not reuse one
+    // when a scope closes, so the width is not derivable from the statement
+    // list without repeating the walk. A function's own width travels on its
+    // node instead, in `FunctionNode::frameSize`. Item 3.4 added it.
+    void execute(const std::vector<Node> &statements, int frameSize);
 };
