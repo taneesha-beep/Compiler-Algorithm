@@ -1,0 +1,4 @@
+fn unused() {
+    return 9223372036854775808
+}
+print 1

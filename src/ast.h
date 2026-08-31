@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -78,12 +79,29 @@ struct NumberNode : ASTNode
 {
     static constexpr NodeType kind = NodeType::Number;
 
-    // The digits as they were written. Re-parsed on every evaluation, which is
-    // ablation B's subject; item 3.2 replaces this with the parsed integer.
+    // The digits as they were written, and the integer they denote. Item 3.2
+    // — ablation B — added `value`: the parser converts the digits once, when
+    // the node is built, where the interpreter used to call `std::stoll(text)`
+    // on every evaluation of the node. See `integerValueOf` in
+    // `src/parser.cpp`, which is where the conversion and its range check now
+    // live.
+    //
+    // ON KEEPING `text`. Nothing on the hot path reads it any more, so it
+    // could have gone, and dropping it would have shrunk the node by a whole
+    // `std::string`. That would have made B two changes at once — the
+    // re-parse *and* a change in node size — and node size is not something
+    // any ablation in the series accounts for; it is what the cut ablation E
+    // would have priced, and it is why this file has no virtual destructor.
+    // The rule is item 3.1's: remove exactly the named cost and nothing else,
+    // the same reason `evaluate` took `const Node &` rather than a raw
+    // pointer. The digits are also still the text a diagnostic quotes, and
+    // `tests/span_test.cpp` and `tests/expression_test.cpp` read them to
+    // identify a node.
     std::string text;
+    std::int64_t value;
 
-    NumberNode(Span span, std::string text)
-        : ASTNode(kind, span), text(std::move(text)) {}
+    NumberNode(Span span, std::string text, std::int64_t value)
+        : ASTNode(kind, span), text(std::move(text)), value(value) {}
 };
 
 // `true` and `false` were two node types when item 1.1 added them, because the
