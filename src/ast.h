@@ -119,30 +119,103 @@ struct IdentifierNode : ASTNode
         : ASTNode(kind, span), name(std::move(name)) {}
 };
 
+// Which operator a `UnaryOpNode` or a `BinOpNode` applies. Item 3.3 — ablation
+// C — added both, and the parser settles which operator was written once, when
+// the node is built. The interpreter used to compare the node's text against
+// one string literal after another on every evaluation, so `+` cost one
+// comparison and `!=` cost ten. See `binOpKindOf` and `unaryOpKindOf` in
+// `src/parser.cpp`, which is where the mapping now lives, and the two switches
+// in `Interpreter::evaluate`, which is what reads these.
+//
+// ON THE ORDER OF THE ENUMERATORS. They are in the order the string chain
+// tested them, because what the chain cost an operation was a function of the
+// operator's position in it — `+` was tested first and `!=` tenth — and item
+// 3.3's per-operation model is fitted against those positions. Reordering them
+// would not change what the program computes and would make that model
+// unreadable against the code it describes.
+//
+// ON COVERING THE UNARY OPERATORS. The roadmap names only `BinOpKind`, but the
+// cost ablation C is defined against is operator dispatch by string
+// comparison, and the note on `UnaryOpNode` below has said since item 1.1 that
+// its text comparison is C's subject too. Leaving `-` and `!` comparing text
+// would have left a two-comparison chain on the hot path with no row to
+// attribute it to, and C's number would mean "most of the operator dispatch"
+// while the ledger recorded it as "the operator dispatch". None of the four
+// benchmark programs applies a unary operator inside its loop, so this changes
+// almost nothing in the measurement and settles what the number may be called.
+enum class BinOpKind
+{
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Equal,
+    NotEqual
+};
+
+enum class UnaryOpKind
+{
+    Negate,
+    Not
+};
+
 struct UnaryOpNode : ASTNode
 {
     static constexpr NodeType kind = NodeType::UnaryOp;
 
-    // Held as text, and compared as text when the operator is applied. That is
-    // ablation C's subject, so it stays text until item 3.3.
+    // The operator as it was written, and which operator that is. Item 3.3 —
+    // ablation C — added `opKind`; until then the text was also what the
+    // interpreter compared against `"-"` and `"!"` to decide which operator to
+    // apply. `op` stays, for the reason given on `BinOpNode` below.
     std::string op;
+    UnaryOpKind opKind;
     Node operand;
 
-    UnaryOpNode(Span span, std::string op, Node operand)
-        : ASTNode(kind, span), op(std::move(op)), operand(std::move(operand)) {}
+    UnaryOpNode(Span span, std::string op, UnaryOpKind opKind, Node operand)
+        : ASTNode(kind, span), op(std::move(op)), opKind(opKind),
+          operand(std::move(operand)) {}
 };
 
 struct BinOpNode : ASTNode
 {
     static constexpr NodeType kind = NodeType::BinOp;
 
+    // The operator as it was written, and which operator that is — the same
+    // pairing item 3.2 gave `NumberNode`, and added by item 3.3 for the same
+    // kind of reason: the walk reads a field where it used to walk a chain of
+    // string comparisons.
+    //
+    // ON KEEPING `op`. There is no option that leaves the node's size alone,
+    // and node size is not something any ablation in this series accounts for
+    // — it is what the cut ablation E would have priced, and it is why this
+    // file has no virtual destructor. So the rule is item 3.2's: take the
+    // smaller of the two available perturbations. Dropping the digits takes
+    // this node from 80 bytes to 56 where adding the enumerator beside them
+    // takes it to 88, and `UnaryOpNode` moves the same way, 64 to 40 against 64
+    // to 72 — a change of 24 bytes against one of 8, measured with a `sizeof`
+    // probe compiled against each variant under the toolchain that takes the
+    // rows (GCC 13.3.0, libstdc++). Item 3.2 chose +8 over −24 on exactly this
+    // arithmetic for `NumberNode::text`.
+    //
+    // Here there is a second reason, and it is the stronger one in practice.
+    // Four diagnostics quote this text — the two "operator '<op>' cannot be
+    // applied to …" messages, "integer overflow in '<op>'", and "integer
+    // overflow in unary '<op>'" — and `tests/diagnostic_test.cpp` pins them
+    // byte for byte. Reconstructing that text from the enumerator would be a
+    // second mapping to keep in step with this one, in the one place where
+    // being wrong is invisible until a user sees it.
     std::string op;
+    BinOpKind opKind;
     Node left;
     Node right;
 
-    BinOpNode(Span span, std::string op, Node left, Node right)
-        : ASTNode(kind, span), op(std::move(op)), left(std::move(left)),
-          right(std::move(right)) {}
+    BinOpNode(Span span, std::string op, BinOpKind opKind, Node left, Node right)
+        : ASTNode(kind, span), op(std::move(op)), opKind(opKind),
+          left(std::move(left)), right(std::move(right)) {}
 };
 
 struct AssignNode : ASTNode
