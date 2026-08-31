@@ -442,6 +442,18 @@ Two entries already belong here and are recorded now so they are not lost:
   names are also short (`v01`…`v16`), which understates the effect rather than
   inflating it, since longer keys cost more per comparison.
 
+  **Item 3.1 has since narrowed that pre-attribution, and only its cache half.**
+  The instruction figure stands. The D1 figure does not transfer: ablation A —
+  which touches nothing about the environment — removed **99.29%** of
+  `bench/vars.algo`'s D1 misses, 3,021,434 down to 21,427, both measured through
+  the driver at the same path length. So most of the miss traffic the 5-name
+  control attributed to frame depth was the reference-count write landing in
+  each node's control block *while* the map walk was in flight, not the map walk
+  itself. The two causes overlap, which is what the interaction residual is for
+  — but it means **ablation D should not be expected to show a large D1 effect
+  once A is already applied**, and if a session finds itself surprised by a small
+  one, this is why. `Ir` is unaffected by any of this.
+
 - **The length of the binary's own path moves the cache columns too, and by more
   than the environment block does.** Left by item 2.4, and it sharpens the entry
   above rather than repeating it. Item 2.3 found that the environment block
@@ -479,3 +491,60 @@ Two entries already belong here and are recorded now so they are not lost:
   against 16. So Phase 3 must measure configuration N *through the orchestrator*
   like every other configuration, rather than reusing those rows as N. `Ir` is
   comparable across both, and the attribution rests on `Ir`.
+
+- **Ablation A did not remove atomics, and its number must not be read as the
+  price of atomic reference counting.** Left by item 3.1, and checked in the
+  binary rather than assumed, because the roadmap predicts for A "a
+  disproportionate effect on atomics-heavy workloads" and that mechanism is not
+  the one operating here.
+
+  libstdc++ selects `_S_atomic` for `shared_ptr` at compile time, but the
+  operation it emits then dispatches at **run time** on glibc's
+  `__libc_single_threaded` (glibc 2.32 and later; this image has 2.39). The
+  measured binary imports that symbol, and disassembling `Interpreter::evaluate`
+  in configuration N shows the shape plainly — the flag is loaded, tested, and
+  the plain path taken:
+
+  ```
+  ldr   x23, [x23, #4048]   ; &__libc_single_threaded, via the GOT
+  ldrb  w1, [x23]
+  cbz   w1, <atomic path>   ; not taken: algo never creates a thread
+  ldr   w2, [x22, #8]       ; the increment, plain
+  add   w2, w2, #0x1
+  str   w2, [x22, #8]
+  ```
+
+  The counted object really is the atomic instantiation — cachegrind demangles
+  the destroyed nodes as
+  `std::_Sp_counted_ptr_inplace<BinOpNode, …, (__gnu_cxx::_Lock_policy)2>`, and
+  policy 2 is `_S_atomic`. The dispatch is what makes the difference, and it
+  resolves at run time.
+
+  **Confirmed by execution, not only by reading the disassembly.** Every atomic
+  read-modify-write in this binary goes through one of libgcc's outline helpers,
+  which cachegrind lists by name whenever it retires an instruction. Run against
+  a small `while` program with a real `--cachegrind-out-file`, the out-file names
+  717 functions — `Interpreter::evaluate` among them — and
+  **`__aarch64_ldadd4_acq_rel`, the helper the reference count would use, is not
+  one of them.** It never executes. Two *other* outline helpers do,
+  `__aarch64_cas4_acq` and `__aarch64_swp4_rel`, and they are the honest control
+  on the method: both run inside `init_have_lse_atomics` and `pthread_once` while
+  the loader starts the process, nowhere near the walk. `algo` never creates a
+  thread, so **the count was maintained non-atomically on every node visit.**
+
+  What A priced is therefore ordinary integer traffic — per `evaluate` call, a
+  GOT load, two flag loads, a load/add/store, a load/sub/store, an acquire load
+  of the fused use-and-weak word, and five conditional branches. The branch
+  counter confirms the shape independently: the branch delta divided by the
+  `evaluate` calls each program's source implies is **exactly 5.0** on all three
+  iterative benchmarks.
+
+  Two consequences for how A's figure may be quoted. It is a **lower bound** on
+  what the same change is worth where the dispatch resolves the other way — a
+  multi-threaded host program, an older glibc, or a libstdc++ built without the
+  single-threaded fast path — and there the removed work would be genuine
+  acquire-release atomics, whose cost in *cycles* is far above their cost in
+  instructions. And it is a reminder that cachegrind counts instructions
+  retired: an atomic increment and a plain one are close to equal in `Ir` and
+  are not close to equal in time. The wall-clock columns are narrative only and
+  cannot settle the difference either.

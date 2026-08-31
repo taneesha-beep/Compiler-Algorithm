@@ -168,3 +168,57 @@ within process startup — 22 counts in 16 billion on `fib32`. Compare the
 invoked by moves them further*: 38 characters against 16. **That is the whole
 argument for measuring configuration N through the orchestrator rather than
 reusing the `baseline` rows for it.**
+
+### Phase 3, item 3.1 — twelve rows: configuration N and ablation A
+
+**Four `v1-naive-treewalk` rows.** Configuration **N**, the naive tree-walker,
+at commit `9407ca6`, measured through `scripts/bench-ablations.sh` — *not* read
+off the eight `baseline` rows, for the reason stated immediately above. This is
+the row set every isolated ablation is subtracted from.
+
+They arrive with a control nobody had to arrange. `src/` and `CMakeLists.txt`
+are byte-identical from `75b84e8` through `9407ca6`, so N is the same
+interpreter as item 2.4's `main` and `75b84e8` configurations, reached a third
+way in a later session and across a restart of the Docker daemon. It reproduces
+both of them **exactly on all seventeen cachegrind columns for all four
+programs**.
+
+**Eight ablation-A rows, four labelled `perf/iso-a` and four `perf/cum-a`**, all
+at commit `6036d06`. Two tags on one commit is not a mistake: the isolated
+series applies each ablation to N alone and the cumulative series applies them
+in the order A → B → C → D, so *at A the two series are the same tree*. They
+diverge at B, where `iso-b` is N+B and `cum-b` is N+A+B.
+
+**The commit was nevertheless measured twice, once per label, and both rows are
+kept.** The reason is that item 5.1 reads the cumulative table and item 5.2 the
+isolated one, each by `config` label; a `perf/cum-a` that existed only as a
+footnote saying "see `perf/iso-a`" would be a special case in the one
+arithmetic this project exists to perform. Eight rows cost about two and a half
+extra minutes and buy a second thing as well — the two label groups are the same
+binary invoked by the same 38-character path, so they are a reproducibility
+control, and they agree **on all seventeen cachegrind columns for all four
+programs**.
+
+What A removed, N minus A, from the committed rows:
+
+| Program | `Ir` | | `D1_misses` | | `branches` | `mispredicts` |
+|---|---|---|---|---|---|---|
+| `bench/arith.algo` | −1,904,000,150 | −12.62% | −3 | −0.01% | −430,000,030 | −5,999,992 |
+| `bench/fib32.algo` | −1,385,158,921 | −8.66% | −2,881,267 | −21.67% | −296,064,500 | −33,302,021 |
+| `bench/loop10m.algo` | −1,370,000,128 | −9.80% | −5 | −0.02% | −300,000,025 | −20,000,000 |
+| `bench/vars.algo` | −905,000,532 | −7.04% | −3,000,007 | −99.29% | −195,000,120 | −3,000,036 |
+
+Every `output` field is unchanged from N's — `24000000`, `2178309`,
+`10000000`, `136000000` — which is the same independent check item 2.2 made of
+those four answers. An ablation that changed one would be visible in the row
+rather than behind an exit code.
+
+**The `branches` column is what pins the attribution.** Divide the branch delta
+by the number of `evaluate` calls each program's source implies and it is
+**exactly 5.0 for all three iterative programs** — `loop10m` 30 branches per
+iteration over 6 calls, `arith` 215 over 43, `vars` 195 over 39. Five is what
+the removed sequence contains: the null check on the control block, the
+single-threaded test on the increment, the fused release check, the
+single-threaded test on the decrement, and the drop-to-zero test. The
+instruction delta agrees across the same three programs at 22.1–23.2 `Ir` per
+call. Nothing else in the interpreter changed, and the counters say so.
