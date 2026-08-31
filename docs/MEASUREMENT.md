@@ -607,3 +607,38 @@ Two entries already belong here and are recorded now so they are not lost:
   can hide anything, so it is a second and independent source of the same sign.
   Item 5.2 should report both rather than attributing the whole residual to
   overlap.
+
+- **An ablation that changes a node's size moves the cache columns, and the
+  effect is not attributable to what the ablation claims to remove.** Left by
+  item 3.2, and it is the third mechanism on this list that moves `D1_misses`
+  without moving `Ir` — after the environment block and the length of
+  `argv[0]`.
+
+  B adds a `std::int64_t` to `NumberNode` and keeps the digits, taking the node
+  from **48 bytes to 56** under the toolchain that produces these rows (GCC
+  13.3.0, libstdc++; measured with a `sizeof` probe compiled against each
+  worktree's `src/`). `bench/fib32.algo` — by a wide margin the heaviest
+  allocator and walker of nodes among the four programs — moves **−15.57% on
+  `D1_misses`** under B, while `arith`, `loop10m` and `vars` move by single
+  counts. Every literal in `fib32` is a single digit, so nothing about the
+  literal path explains a cache effect there.
+
+  **There was no size-preserving option.** Dropping `text` instead of adding
+  beside it would have taken the node to 24 bytes — a −24 change against this +8
+  one — so the choice was between two perturbations and the smaller was taken.
+  Ablation E, the item that would have priced node layout, was cut on
+  2026-08-30, which means **no row in this repository attributes anything to node
+  size**. That is what makes the effect a boundary rather than a result.
+
+  **How to read a cache column in Phase 3.** Before attributing a `D1_misses`
+  move to an ablation's named cause, check whether that ablation changed the
+  size of a node. `Ir` does not move for this reason and the attribution rests on
+  `Ir` — which is now true for four independent reasons on this list.
+
+- **Ablation B changed the language, so the series is not measuring one fixed
+  set of accepted programs.** Left by item 3.2. Full argument is in the entry
+  above on B's reachability change; it is repeated in the list here only because
+  a reader scanning for *what limits the claim* should not have to find it
+  inside a paragraph about exit codes. **B is the only ablation that does this**
+  — A, C and D are semantics-preserving — and no benchmark program is affected,
+  so no committed row moves because of it.

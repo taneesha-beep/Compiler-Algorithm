@@ -356,6 +356,19 @@ It is positive, which is the direction Phase 5 predicts: the parts sum to more
 than the whole. **Item 5.2 owns the residual**; this is one pair of four
 ablations, reported as an observation rather than as that result.
 
+#### N and B do not accept the same programs
+
+B is the only ablation in the series that changes the language, and a reader
+comparing these rows should know it. The out-of-range literal check travelled
+with the conversion, so it now fires on **every** literal in the file rather
+than only on literals the program reaches. Exit code (65), message and caret are
+unchanged — `tests/diagnostic_test.cpp` pins all three — and the change is a
+strict widening: B rejects a superset of what N rejects, and every program both
+accept produces identical output. **No benchmark program contains an
+out-of-range literal anywhere, so no row here is affected.**
+`tests/error_overflow_unreached.algo` is the case that pins the difference, and
+`docs/MEASUREMENT.md`'s *Boundary of the claim* carries the argument.
+
 #### The node grew by eight bytes, and `fib32`'s cache column shows it
 
 B adds a `std::int64_t` to `NumberNode` and keeps the digits, so the node goes
