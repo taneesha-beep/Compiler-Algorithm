@@ -6,10 +6,11 @@
 > [opcode table](#the-opcode-table) below; everything else on this page is the
 > reasoning behind it.
 >
-> **Nothing executes bytecode yet.** Item 4.2 is the compiler — **done,
-> 2026-09-04**, in [`src/compiler.{h,cpp}`](../src/compiler.h), and it writes
-> chunks but runs none of them. 4.3 is the virtual machine, 4.4 the differential
-> test across the two engines, 4.5 the disassembler. This file describes the
+> **Bytecode executes.** Item 4.2 is the compiler — **done, 2026-09-04**, in
+> [`src/compiler.{h,cpp}`](../src/compiler.h) — and item 4.3 is the virtual
+> machine that runs what it writes — **done, 2026-09-04**, in
+> [`src/vm.{h,cpp}`](../src/vm.h), reached by `algo --engine=vm`. 4.4 is the
+> differential test across the two engines, 4.5 the disassembler. This file describes the
 > format those four are built on and nothing more; the format itself lives in
 > [`src/chunk.h`](../src/chunk.h). **What 4.2 settled on top of it is a section
 > of its own near the end**, and 4.3 and 4.5 should read it.
@@ -433,6 +434,59 @@ chunk structurally. Wiring a flag belongs to 4.3 and 4.5 respectively.
 
 ---
 
+## What item 4.3 settled
+
+Item 4.3 built the machine — `src/vm.{h,cpp}`, landed 2026-09-04, reached by
+`algo --engine=vm`. It discharged the obligation listed for it below, and took
+four decisions this page had left open. **4.4 and 4.5 should read these**; the
+first two are things they would otherwise have to guess at.
+
+**The operand-stack guard is `operand stack exhausted`, a `RuntimeFault`
+(exit 70), at a cap of 2^20 slots.** This page left all three to 4.3 as "the
+VM's own resource". The classification follows the rule in `CLAUDE.md`'s
+*Output discipline* — a fault settled by the source text alone is a
+`CompileError`, one that depends on what the program computed is a
+`RuntimeFault` — and exhausting the stack is reached by recursing, which is
+data-dependent, exactly like `call depth exceeded`. The wording is deliberately
+not "overflow": four existing messages are `integer overflow in …`, and reusing
+the word would make two unrelated faults read alike. The cap is a bound rather
+than an OOM: slots and temporaries share one stack, so the depth it bounds is
+the sum over live frames of `frameSize` plus live temporaries. `maxCallDepth`
+already bounds the *number* of live frames at 1000, but a frame is as wide as
+its function declares — up to `maxOperand` slots — so 1000 frames of maximum
+width would be 65 million slots and neither guard implies the other. For a
+program that recurses with very wide frames this one fires first, which is
+correct: the resource actually exhausted is the operand stack, and reporting
+the call depth would name the wrong cause.
+
+**The fault messages are duplicated from the tree-walker, word for word, and
+that is the decision rather than a shortcut.** Extracting them into a header
+both engines include would make the two agree *by construction*, and agreeing
+by construction is not something item 4.4 could then check — the duplication is
+what 4.4 has to find a difference in. The helpers could not have been shared in
+any case: the tree-walker's take a `BinOpNode` for their span and operator text,
+and the VM has a `SpanEntry` instead. What *is* shared is `maxCallDepth`, which
+`src/vm.cpp` includes from `src/interpreter.h` rather than restating — a
+constant is not a rendered string, and the two engines must not drift on it.
+
+**`--engine` defaults to `tree`, and `--dump` was not added.** Every golden case
+invokes `algo <file>` with no flag, so the default decides what the whole suite
+exercises; pointing it at the VM before 4.4 exists would re-aim 29 cases at an
+engine nothing had checked. An unrecognised value is exit 64, like any other bad
+command line. `--dump` remains item 4.5's.
+
+**Item 4.3's acceptance was met by a throwaway driver, not by a committed one.**
+`--engine=vm` matched `--engine=tree` on stdout, stderr and exit code for all 35
+programs under `tests/`, `examples/` and `bench/` — including the seven the front
+end rejects with 65 and the five that fault at run time with 70. The driver lived
+under `build-vmcheck/` and was deleted, because **item 4.4 is precisely the item
+that makes this permanent**, and a committed script here would be re-shaped
+rather than reused. `tests/vm_test.cpp` holds instead only what 4.4 cannot reach:
+the `POP` arm, the operand-stack guard, the unknown-opcode arm, and the span
+contract.
+
+---
+
 ## What the rest of Phase 4 owes this file
 
 * ~~**4.2**~~ — **done, 2026-09-04.** Sets `SpanEntry::span` per the rule above
@@ -440,9 +494,11 @@ chunk structurally. Wiring a flag belongs to 4.3 and 4.5 respectively.
   (**both halves of a lowered pair**); emits `CONST 0; RETURN` at the end of
   every function body; backpatches jumps through `patchOperand`. See the section
   above for the five decisions it took on top of these.
-* **4.3** — saves the opcode's own offset before decoding, so `spanAt` resolves
-  the right instruction; keeps `maxCallDepth` and counts the program's frame as
-  the first; guards operand-stack overflow.
+* ~~**4.3**~~ — **done, 2026-09-04.** Saves the opcode's own offset before
+  decoding, so `spanAt` resolves the right instruction; keeps `maxCallDepth`
+  — included from `src/interpreter.h` rather than restated — and counts the
+  program's frame as the first; guards the operand stack at 2^20 slots. See the
+  section above for the four decisions it took on top of these.
 * **4.4** — is what turns every claim on this page from an assertion into
   something CI checks.
 * **4.5** — reads `opCodeName`, `opCodeHasOperand`, the constant pool and the
