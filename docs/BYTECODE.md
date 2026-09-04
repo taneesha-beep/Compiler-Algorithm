@@ -514,8 +514,19 @@ contract.
   — included from `src/interpreter.h` rather than restated — and counts the
   program's frame as the first; guards the operand stack at 2^20 slots. See the
   section above for the four decisions it took on top of these.
-* **4.4** — is what turns every claim on this page from an assertion into
-  something CI checks.
+* ~~**4.4**~~ — **done, 2026-09-04.** Every claim on this page is now checked by
+  CI on every push and under both compilers: each of the 29 `tests/*.algo`
+  golden cases is registered twice, `<case>_tree` and `<case>_vm`, and the two
+  engines are held to the *same* `.expected` / `.expected_err` /
+  `.expected_code` files — so stdout, stderr and the exit code are compared,
+  not merely answers. 65 tests where there were 36. Three things it settled on
+  top of this file: the tree registration passes **no** engine flag (the goldens
+  were recorded against the bare invocation, so that is what stays under test);
+  **no golden file was written or regenerated**, because the shared expectation
+  is what makes this differential rather than two independent suites; and the
+  span-table rules above — the operator spelling on both halves of a lowered
+  pair, `JUMP_IF_FALSE` carrying the condition's span — are now pinned by the
+  five faulting cases running under the VM, not only by `tests/vm_test.cpp`.
 * **4.5** — reads `opCodeName`, `opCodeHasOperand`, the constant pool and the
   function table; a jump operand is already the absolute target, so there is
   nothing to compute.
