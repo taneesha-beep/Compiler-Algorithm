@@ -475,6 +475,21 @@ exercises; pointing it at the VM before 4.4 exists would re-aim 29 cases at an
 engine nothing had checked. An unrecognised value is exit 64, like any other bad
 command line. `--dump` remains item 4.5's.
 
+**Locals living on the operand stack has one sharp edge, and it is `LOAD_LOCAL`.**
+`stack[slotBase + s]` is a reference *into* the vector the same instruction is about to
+grow, so pushing it directly dangles on exactly the pushes that reallocate. The value is
+copied out first. Nothing in the format says this — it falls out of the roadmap's choice to
+put slots and temporaries on one stack — and it is written here because the natural spelling
+of the arm is the wrong one and the failure is intermittent rather than loud.
+
+**Two engine-bug paths exist that no chunk reaches.** A byte outside the nineteen raises
+`unknown opcode` as a `RuntimeFault`, the counterpart of the tree-walker's
+`unknown node type`, so a corrupt chunk reports itself instead of falling through into
+undefined behaviour; and the dispatch loop asserts that the instruction pointer is inside
+`code`, which a chunk ending in neither `HALT` nor `RETURN` would violate. Item 4.5 should
+expect the same two shapes: a disassembler also has to print *something* for a byte that
+names no opcode.
+
 **Item 4.3's acceptance was met by a throwaway driver, not by a committed one.**
 `--engine=vm` matched `--engine=tree` on stdout, stderr and exit code for all 35
 programs under `tests/`, `examples/` and `bench/` — including the seven the front
