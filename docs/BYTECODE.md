@@ -6,10 +6,13 @@
 > [opcode table](#the-opcode-table) below; everything else on this page is the
 > reasoning behind it.
 >
-> **Nothing executes bytecode yet.** Item 4.2 is the compiler, 4.3 the virtual
-> machine, 4.4 the differential test across the two engines, 4.5 the
-> disassembler. This file describes the format those four are built on and
-> nothing more. The format lives in [`src/chunk.h`](../src/chunk.h).
+> **Nothing executes bytecode yet.** Item 4.2 is the compiler — **done,
+> 2026-09-04**, in [`src/compiler.{h,cpp}`](../src/compiler.h), and it writes
+> chunks but runs none of them. 4.3 is the virtual machine, 4.4 the differential
+> test across the two engines, 4.5 the disassembler. This file describes the
+> format those four are built on and nothing more; the format itself lives in
+> [`src/chunk.h`](../src/chunk.h). **What 4.2 settled on top of it is a section
+> of its own near the end**, and 4.3 and 4.5 should read it.
 >
 > **There is no performance claim on this page.** Item 4.1 runs no measurement,
 > and `CLAUDE.md` rule 2 forbids writing a number that was not produced by a
@@ -368,11 +371,75 @@ oversight.
 
 ---
 
+## What item 4.2 settled
+
+Item 4.2 built the compiler — `src/compiler.{h,cpp}`, landed 2026-09-04. It
+discharged the obligation listed for it below, and in doing so it took five
+decisions this page had left open. They are recorded here rather than in the
+roadmap because **4.3 and 4.5 are told to read this file**, and all five are
+things those two items would otherwise have to guess at or rediscover.
+
+**The tree must outlive the chunk, and the failure is quiet.** The section on
+the span table says `SpanEntry::op` is a `const char *` into the AST and that
+nothing here owns it. What it did not say is what happens when the AST is
+dropped first, and 4.2's first acceptance driver did exactly that: it lexed,
+parsed, resolved, compiled, and returned the chunk, leaving the tree behind.
+Nothing crashed and nothing read as null — **the pointers stayed non-null and
+read as empty strings**, so a type fault would have rendered
+`operator '' cannot be applied to integer and boolean` and item 4.4 would have
+met it as a diagnostic mismatch with no obvious cause. So: **whatever runs,
+prints or tests a chunk must keep the tree it was compiled from alive for as
+long as the chunk exists.** In `src/main.cpp` that is free, the AST being a
+local of the same scope; the shape that breaks it silently is the natural
+refactor — a `compileFile(path)` helper that returns a `Chunk` and lets the
+tree go. Item 4.5 inherits this too: a disassembler prints `SpanEntry::op`.
+
+**`CONST 0; RETURN` is emitted at the end of every body unconditionally**,
+including bodies that already end in a `return`. The format requires it only for
+a body that runs off its end, but emitting it always is what makes *every
+function region ends in `RETURN`* an invariant rather than a case analysis, so
+no body can fall through into the next one. Where it is unreachable it costs
+four bytes. Item 4.5 will disassemble a trailing `CONST 0; RETURN` after an
+explicit `return` in most functions, and that is correct output, not a bug.
+
+**Three instructions carry a span that no diagnostic will ever render**, and
+they carry one because every instruction has a span entry and a disassembly
+reads better with a line number than without. `HALT` carries the last top-level
+statement's span — a zero span for a program with no statements at all. The
+unconditional `JUMP` out of an `if`'s then-branch, and a `while`'s backward
+`JUMP`, carry the enclosing statement's span. **Only `JUMP_IF_FALSE` has a
+rule**, and it is the one stated above: the *condition's* span.
+
+**A `BlockNode` emits no instruction of its own.** The resolver flattened scopes
+at item 1.3 — a slot is unique within a whole function body, not within the
+block that declared it — so there is nothing to push and nothing to pop, and a
+block is invisible in the disassembly.
+
+**The unpatched-jump placeholder is `maxOperand`, not 0.** `emitJump` writes a
+placeholder and `patchJumpToHere` fills it in later. 0 is the obvious
+placeholder and it is the wrong one: **0 is a legitimate jump target** — a
+`while` written as the program's first statement has its header at offset 0 —
+so an unpatched jump written as 0 is indistinguishable from a correct one, and
+the check that every jump target lands on an instruction boundary passes.
+65535 cannot be a boundary in any chunk this format admits, `code` being capped
+at 65535 bytes. The mutant that removes the patch for an `if` with no `else` is
+caught for exactly this reason and would otherwise have survived.
+
+**What 4.2 did *not* add.** `src/main.cpp` still takes only `--trace`. There is
+no `--engine` and no `--dump`: 4.2 adds a back end and runs nothing, so the
+acceptance criterion is met by a unit binary, `tests/compiler_test.cpp`, which
+compiles every program under `tests/`, `examples/` and `bench/` and checks each
+chunk structurally. Wiring a flag belongs to 4.3 and 4.5 respectively.
+
+---
+
 ## What the rest of Phase 4 owes this file
 
-* **4.2** — sets `SpanEntry::span` per the rule above and `SpanEntry::op` on
-  every arithmetic, comparison and unary instruction; emits `CONST 0; RETURN` at
-  the end of every function body; backpatches jumps through `patchOperand`.
+* ~~**4.2**~~ — **done, 2026-09-04.** Sets `SpanEntry::span` per the rule above
+  and `SpanEntry::op` on every arithmetic, comparison and unary instruction
+  (**both halves of a lowered pair**); emits `CONST 0; RETURN` at the end of
+  every function body; backpatches jumps through `patchOperand`. See the section
+  above for the five decisions it took on top of these.
 * **4.3** — saves the opcode's own offset before decoding, so `spanAt` resolves
   the right instruction; keeps `maxCallDepth` and counts the program's frame as
   the first; guards operand-stack overflow.
