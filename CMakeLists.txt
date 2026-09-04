@@ -104,27 +104,55 @@ add_test(NAME vm_test COMMAND vm_test)
 # tests/<name>.expected, plus stderr and the exit code where the case supplies
 # a .expected_err or .expected_code. run_case.cmake runs the interpreter from
 # tests/ with a bare filename, so a diagnostic's path is machine-independent.
+#
+# ITEM 4.4: EVERY CASE IS REGISTERED ONCE PER ENGINE, `<case>_tree` and
+# `<case>_vm`. The golden files are the shared expectation, so the two engines
+# are checked against each other through them — on stdout, stderr AND the exit
+# code, not merely on answers. This is what turns "the VM preserves the
+# language's semantics" from an assertion into something CI re-checks on every
+# push, under both GCC and Clang. `ctest -R _vm` selects one engine and
+# `ctest -R _tree` the other.
+#
+# The 29 existing cases were RENAMED to carry `_tree` rather than left bare.
+# A bare name would have meant "tree" only by the accident of `--engine`'s
+# default, and the failure mode this item exists to catch is exactly a case that
+# silently runs the wrong engine — so the engine belongs in the name on both
+# sides. Nothing depended on the old names: `.github/workflows/ci.yml` runs
+# ctest unfiltered.
+#
+# The tree registration passes NO -DALGO_ENGINE, so run_case.cmake invokes the
+# binary with no flags — byte for byte the command all 29 golden files were
+# recorded against. See the note in run_case.cmake for why that is not spelled
+# `--engine=tree`.
 file(GLOB ALGO_TEST_CASES ${CMAKE_SOURCE_DIR}/tests/*.algo)
 foreach(algo_case ${ALGO_TEST_CASES})
     get_filename_component(case_name ${algo_case} NAME_WE)
-    add_test(
-        NAME ${case_name}
-        COMMAND ${CMAKE_COMMAND}
-                -DALGO_BIN=$<TARGET_FILE:algo>
-                -DALGO_TESTS_DIR=${CMAKE_SOURCE_DIR}/tests
-                -DALGO_CASE=${case_name}
-                -P ${CMAKE_SOURCE_DIR}/tests/run_case.cmake
-    )
-    # ON THIS TIMEOUT. Item 1.2 added `while`, so a non-terminating program is
-    # expressible for the first time and a case that hangs would otherwise hang
-    # CI until the job's own limit — 25 minutes per case under CTest's default,
-    # and the failure would read as an infrastructure problem rather than as the
-    # bug it is. The guard belongs here rather than in the interpreter: an
-    # iteration cap would be a branch inside the hot path of every benchmark
-    # Phase 3 measures, and a language semantic the roadmap does not list.
-    # Almost every case runs in about ten milliseconds, so ten seconds is three
-    # orders of magnitude of headroom and can only fire on a real hang.
-    set_tests_properties(${case_name} PROPERTIES TIMEOUT 10)
+    foreach(engine tree vm)
+        set(engine_define)
+        if(NOT engine STREQUAL "tree")
+            set(engine_define -DALGO_ENGINE=${engine})
+        endif()
+        add_test(
+            NAME ${case_name}_${engine}
+            COMMAND ${CMAKE_COMMAND}
+                    -DALGO_BIN=$<TARGET_FILE:algo>
+                    -DALGO_TESTS_DIR=${CMAKE_SOURCE_DIR}/tests
+                    -DALGO_CASE=${case_name}
+                    ${engine_define}
+                    -P ${CMAKE_SOURCE_DIR}/tests/run_case.cmake
+        )
+        # ON THIS TIMEOUT. Item 1.2 added `while`, so a non-terminating program
+        # is expressible for the first time and a case that hangs would
+        # otherwise hang CI until the job's own limit — 25 minutes per case
+        # under CTest's default, and the failure would read as an
+        # infrastructure problem rather than as the bug it is. The guard
+        # belongs here rather than in the interpreter: an iteration cap would
+        # be a branch inside the hot path of every benchmark Phase 3 measures,
+        # and a language semantic the roadmap does not list. Almost every case
+        # runs in about ten milliseconds, so ten seconds is three orders of
+        # magnitude of headroom and can only fire on a real hang.
+        set_tests_properties(${case_name}_${engine} PROPERTIES TIMEOUT 10)
+    endforeach()
 endforeach()
 
 # The one case that is a workload rather than a check. `fib` is Phase 1's own
@@ -135,4 +163,7 @@ endforeach()
 # assertion about how long the case should take, and no number in it is a
 # measurement. A run that hits sixty seconds has stopped working, not slowed
 # down.
-set_tests_properties(fib PROPERTIES TIMEOUT 60)
+# BOTH registrations need it, and by name, because the loop above has already
+# given every case TIMEOUT 10 — a `fib_vm` left out here would fail on the
+# timeout by construction rather than on anything it computed.
+set_tests_properties(fib_tree fib_vm PROPERTIES TIMEOUT 60)
