@@ -33,7 +33,8 @@ add_library(algo_core STATIC
     src/lexer.cpp
     src/parser.cpp
     src/resolver.cpp
-    src/interpreter.cpp)
+    src/interpreter.cpp
+    src/compiler.cpp)
 target_include_directories(algo_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 add_executable(algo src/main.cpp)
@@ -71,6 +72,21 @@ add_test(NAME resolver_test COMMAND resolver_test)
 add_executable(chunk_test tests/chunk_test.cpp)
 target_link_libraries(chunk_test PRIVATE algo_core)
 add_test(NAME chunk_test COMMAND chunk_test)
+
+# Item 4.2's bytecode compiler. Two jobs in one binary, for the reason its
+# header comment gives: two chunks written out by hand, and then 4.2's
+# acceptance criterion — every program under tests/, examples/ and bench/
+# compiles to a chunk — with structural invariants over each chunk, because
+# nothing executes bytecode until item 4.3 and "it did not throw" is otherwise
+# very nearly the whole of what a chunk can be checked for.
+#
+# It takes the repository root as an argument rather than carrying fixtures:
+# the three directories it sweeps ARE the criterion, and a copy of them would
+# go stale the first time a .algo file was added. src/main.cpp is deliberately
+# not the driver — an engine-selection flag is item 4.3's to add.
+add_executable(compiler_test tests/compiler_test.cpp)
+target_link_libraries(compiler_test PRIVATE algo_core)
+add_test(NAME compiler_test COMMAND compiler_test ${CMAKE_SOURCE_DIR})
 
 # Golden-file cases: run tests/<name>.algo and compare stdout against
 # tests/<name>.expected, plus stderr and the exit code where the case supplies
