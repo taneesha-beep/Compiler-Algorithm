@@ -34,7 +34,8 @@ add_library(algo_core STATIC
     src/parser.cpp
     src/resolver.cpp
     src/interpreter.cpp
-    src/compiler.cpp)
+    src/compiler.cpp
+    src/vm.cpp)
 target_include_directories(algo_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 add_executable(algo src/main.cpp)
@@ -87,6 +88,17 @@ add_test(NAME chunk_test COMMAND chunk_test)
 add_executable(compiler_test tests/compiler_test.cpp)
 target_link_libraries(compiler_test PRIVATE algo_core)
 add_test(NAME compiler_test COMMAND compiler_test ${CMAKE_SOURCE_DIR})
+
+# Item 4.3's bytecode VM. Deliberately narrow: item 4.4 registers every golden
+# case against both engines, so almost everything the machine does is about to
+# be checked against the tree-walker on real programs, which is a better test of
+# a dispatch loop than any hand-built chunk. What is here is the part 4.4 cannot
+# reach — the `POP` arm nothing emits, the operand-stack guard no .algo program
+# can trigger, and the unknown-opcode arm — plus the span-table contract
+# docs/BYTECODE.md warns a test would not otherwise notice.
+add_executable(vm_test tests/vm_test.cpp)
+target_link_libraries(vm_test PRIVATE algo_core)
+add_test(NAME vm_test COMMAND vm_test)
 
 # Golden-file cases: run tests/<name>.algo and compare stdout against
 # tests/<name>.expected, plus stderr and the exit code where the case supplies

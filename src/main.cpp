@@ -5,12 +5,14 @@
 #include <string>
 #include <vector>
 
+#include "compiler.h"
 #include "diagnostic.h"
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
 #include "resolver.h"
 #include "token.h"
+#include "vm.h"
 
 // ============================================================
 // MAIN
@@ -43,12 +45,48 @@ int main(int argc, char *argv[])
     bool trace = false;
     std::string path;
 
+    // WHICH BACK END RUNS. Item 4.3 added a second one — the bytecode VM,
+    // configuration V — and this flag is how it is reached.
+    //
+    // IT DEFAULTS TO `tree`, AND THAT IS NOT A PLACEHOLDER. Every golden case
+    // invokes `algo <file>` with no flag, so the default decides what the whole
+    // suite exercises; changing it would silently re-point 29 cases at an
+    // engine item 4.4 has not yet finished checking. Running each case against
+    // both engines is item 4.4's job, and it is the item that earns the right
+    // to trust the VM.
+    enum class Engine
+    {
+        Tree,
+        Vm
+    };
+    Engine engine = Engine::Tree;
+
     for (int i = 1; i < argc; i++)
     {
         const std::string arg = argv[i];
         if (arg == "--trace")
         {
             trace = true;
+        }
+        else if (arg.rfind("--engine=", 0) == 0)
+        {
+            const std::string value = arg.substr(std::string("--engine=").size());
+            if (value == "tree")
+            {
+                engine = Engine::Tree;
+            }
+            else if (value == "vm")
+            {
+                engine = Engine::Vm;
+            }
+            else
+            {
+                // A bad command line, like any other: the value names no engine
+                // this build has, and that is settled before a byte of the
+                // program is read.
+                std::cerr << renderToolError(program, "unknown engine: " + value);
+                return ExitCode::Usage;
+            }
         }
         else if (arg.size() > 1 && arg[0] == '-')
         {
@@ -70,7 +108,8 @@ int main(int argc, char *argv[])
     if (path.empty())
     {
         std::cerr << renderToolError(program, "no input file")
-                  << "usage: " << program << " [--trace] <input_file>" << std::endl;
+                  << "usage: " << program
+                  << " [--trace] [--engine=tree|vm] <input_file>" << std::endl;
         return ExitCode::Usage;
     }
 
@@ -149,9 +188,32 @@ int main(int argc, char *argv[])
             narrate << "=== Stage 4: Output ===" << std::endl;
         }
 
-        // Stage 4: Execute — the only stage that writes to stdout
-        Interpreter interpreter;
-        interpreter.execute(ast, slots);
+        // Stage 4: Execute — the only stage that writes to stdout.
+        //
+        // ON WHY BOTH ARMS LIVE IN THIS SCOPE. `SpanEntry::op` in a chunk points
+        // into `BinOpNode::op` / `UnaryOpNode::op`, and the chunk owns none of
+        // that text — so **the tree must outlive the chunk compiled from it**.
+        // Here that is free, `ast` being a local of the same `try` block. The
+        // shape that breaks it is the natural refactor: a `runFile(path)` helper
+        // that compiles, lets the tree go, and then executes. It fails quietly —
+        // the pointers stay non-null and read as empty strings, so a fault
+        // renders `operator '' cannot be applied to ...` — which is exactly how
+        // item 4.2's first acceptance driver went wrong. Do not extract it.
+        if (engine == Engine::Vm)
+        {
+            if (trace)
+                narrate << "  Engine: bytecode VM" << std::endl;
+            const Chunk chunk = compile(ast, slots);
+            VM vm;
+            vm.run(chunk);
+        }
+        else
+        {
+            if (trace)
+                narrate << "  Engine: tree-walking interpreter" << std::endl;
+            Interpreter interpreter;
+            interpreter.execute(ast, slots);
+        }
     }
     catch (const CompileError &e)
     {
