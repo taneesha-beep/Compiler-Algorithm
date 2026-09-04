@@ -694,6 +694,12 @@ Every instruction D removes is in one of five places, and three of them go to
 program that pushes a frame per call: `_Rb_tree::_M_emplace_hint_unique`
 387,703,525 → **0** and the rest of `_Rb_tree` 190,327,185 → **0**.
 
+The two instruments that produced this, both reusable: a **counting comparator** —
+`std::map<K, V, Counting>` calls its comparator exactly once per node visited, so it
+measures the descent depth per key without anyone reasoning about the tree's shape — and
+a **per-function cachegrind diff** of the two configurations. Neither is arithmetic on the
+source, which is what the previous three ablations used and what fails here.
+
 **The sharp check is `bcmp`, and it is exact.** Divide the `bcmp` instructions D
 removes by the key comparisons each source implies:
 
