@@ -62,6 +62,16 @@ add_executable(resolver_test tests/resolver_test.cpp)
 target_link_libraries(resolver_test PRIVATE algo_core)
 add_test(NAME resolver_test COMMAND resolver_test)
 
+# Item 4.1's chunk format. `src/chunk.h` is header-only and nothing in
+# algo_core includes it yet — item 4.2 is the first thing that will — so this
+# target is also the only thing that compiles it at all. That is a reason to
+# have it rather than an argument against: without a translation unit including
+# the header, a syntax error in it would not be found until item 4.2, and the
+# encoding it defines would not be checked at all until item 4.3 ran a program.
+add_executable(chunk_test tests/chunk_test.cpp)
+target_link_libraries(chunk_test PRIVATE algo_core)
+add_test(NAME chunk_test COMMAND chunk_test)
+
 # Golden-file cases: run tests/<name>.algo and compare stdout against
 # tests/<name>.expected, plus stderr and the exit code where the case supplies
 # a .expected_err or .expected_code. run_case.cmake runs the interpreter from
