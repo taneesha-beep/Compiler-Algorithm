@@ -76,6 +76,7 @@ Must be run inside the bench container; see docs/MEASUREMENT.md.
   --commit SHA      override the detected commit
   --out FILE        CSV to append to (default: results/measurements.csv)
   --runs N          wall-clock runs (default: 10; cachegrind always runs once)
+  --engine E        pass --engine=E to the binary (tree|vm); default: no flag at all
   -h, --help        this text
 
 Example:
@@ -101,6 +102,7 @@ die() {
 # --------------------------------------------------------------------------
 
 binary=""; program=""; config=""; commit_override=""; out_file=""; runs=10
+engine=""; engine_flag=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -109,6 +111,7 @@ while [ $# -gt 0 ]; do
         --commit)  commit_override=${2:-}; [ -n "$commit_override" ] || die "$EX_USAGE" "--commit needs a value"; shift 2 ;;
         --out)     out_file=${2:-};        [ -n "$out_file" ]        || die "$EX_USAGE" "--out needs a value"; shift 2 ;;
         --runs)    runs=${2:-};            shift 2 ;;
+        --engine)  engine=${2:-};          [ -n "$engine" ]          || die "$EX_USAGE" "--engine needs a value"; shift 2 ;;
         -*)        die "$EX_USAGE" "unknown option '$1'" "run with --help" ;;
         *)
             if   [ -z "$binary" ];  then binary=$1
@@ -129,6 +132,16 @@ esac
 [ -f "$binary" ] || die "$EX_USAGE" "no such binary: $binary"
 [ -x "$binary" ] || die "$EX_USAGE" "not executable: $binary"
 [ -f "$program" ] || die "$EX_USAGE" "no such program: $program"
+
+# The engine is part of what the row claims to have measured, so a value the
+# binary would reject with exit 64 must not reach a run whose `config` label
+# says otherwise. Empty means no flag at all -- byte for byte the invocation
+# every row before item 5.1 was taken under.
+case "$engine" in
+    "")        engine_flag="" ;;
+    tree|vm)   engine_flag="--engine=$engine" ;;
+    *)         die "$EX_USAGE" "--engine must be tree or vm, got '$engine'" ;;
+esac
 
 [ -n "$out_file" ] || out_file="$repo_root/results/measurements.csv"
 
@@ -292,18 +305,18 @@ timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-note "measuring $config: $binary $program"
+note "measuring $config: $binary ${engine_flag:+$engine_flag }$program"
 note "  wall clock: $runs runs"
 
 times=""
 expected_out=""
 for i in $(seq 1 "$runs"); do
     start_ns=$(date +%s%N)
-    if ! "$binary" "$program" >"$tmp/run.out" 2>"$tmp/run.err"; then
+    if ! "$binary" ${engine_flag:+"$engine_flag"} "$program" >"$tmp/run.out" 2>"$tmp/run.err"; then
         die "$EX_SOFTWARE" \
             "the program failed on wall-clock run $i — no row written." \
             "" \
-            "$binary $program exited non-zero. stderr:" \
+            "$binary $engine_flag $program exited non-zero. stderr:" \
             "" \
             "$(head -5 "$tmp/run.err" 2>/dev/null)"
     fi
@@ -353,7 +366,7 @@ note "  cachegrind: 1 run (roughly a minute)"
 
 if ! valgrind --tool=cachegrind --cache-sim=yes --branch-sim=yes \
         --cachegrind-out-file="$tmp/cg.out" \
-        "$binary" "$program" >"$tmp/cg.stdout" 2>"$tmp/cg.stderr"; then
+        "$binary" ${engine_flag:+"$engine_flag"} "$program" >"$tmp/cg.stdout" 2>"$tmp/cg.stderr"; then
     die "$EX_SOFTWARE" \
         "the program failed under cachegrind — no row written." \
         "" \
@@ -411,7 +424,7 @@ perf_cycles=""; perf_instructions=""; perf_ipc=""
 
 if command -v perf >/dev/null 2>&1 && perf stat true >/dev/null 2>&1; then
     note "  perf: available — collecting cycles and instructions"
-    if perf stat -x, -e cycles,instructions "$binary" "$program" \
+    if perf stat -x, -e cycles,instructions "$binary" ${engine_flag:+"$engine_flag"} "$program" \
             >/dev/null 2>"$tmp/perf.csv"; then
         perf_cycles=$(awk -F, '$3 == "cycles"       { print $1; exit }' "$tmp/perf.csv")
         perf_instructions=$(awk -F, '$3 == "instructions" { print $1; exit }' "$tmp/perf.csv")

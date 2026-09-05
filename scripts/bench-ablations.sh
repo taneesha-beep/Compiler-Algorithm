@@ -108,6 +108,8 @@ each build and each measurement happens inside the bench container.
   --runs N            wall-clock runs per measurement, passed to bench.sh
   --out FILE          CSV to append to, passed to bench.sh
   --clean             remove each worktree after measuring it
+  --engine E          pass --engine=E to the measured binary (tree|vm)
+  --label NAME        config label for the rows, instead of the ref name (one ref only)
   --dry-run           print the plan and the exact commands, measure nothing
   -h, --help          this text
 
@@ -144,6 +146,7 @@ die() {
 # --------------------------------------------------------------------------
 
 refs=(); programs_arg=""; runs=""; out_file=""; clean=0; dry_run=0
+engine=""; label=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -151,6 +154,8 @@ while [ $# -gt 0 ]; do
         --programs) programs_arg=${2:-}; [ -n "$programs_arg" ] || die "$EX_USAGE" "--programs needs a value"; shift 2 ;;
         --runs)     runs=${2:-};        [ -n "$runs" ]        || die "$EX_USAGE" "--runs needs a value";     shift 2 ;;
         --out)      out_file=${2:-};    [ -n "$out_file" ]    || die "$EX_USAGE" "--out needs a value";      shift 2 ;;
+        --engine)   engine=${2:-};      [ -n "$engine" ]      || die "$EX_USAGE" "--engine needs a value";   shift 2 ;;
+        --label)    label=${2:-};       [ -n "$label" ]       || die "$EX_USAGE" "--label needs a value";    shift 2 ;;
         --clean)    clean=1; shift ;;
         --dry-run)  dry_run=1; shift ;;
         -*)         die "$EX_USAGE" "unknown option '$1'" "run with --help" ;;
@@ -159,6 +164,13 @@ while [ $# -gt 0 ]; do
 done
 
 [ ${#refs[@]} -gt 0 ] || { usage >&2; exit "$EX_USAGE"; }
+
+# --label renames the config column, which is the only place a row says which
+# engine ran. With two refs it would put one name on two configurations, so it
+# is refused rather than silently applied to the first.
+if [ -n "$label" ] && [ ${#refs[@]} -ne 1 ]; then
+    die "$EX_USAGE" "--label names one configuration, but ${#refs[@]} refs were given"
+fi
 
 # --------------------------------------------------------------------------
 # Gate 1 — is this the orchestration platform?
@@ -324,6 +336,9 @@ fi
 if [ -n "$out_file" ]; then
     bench_opts+=(--out "$out_file"); bench_shown="$bench_shown --out $out_file"
 fi
+if [ -n "$engine" ]; then
+    bench_opts+=(--engine "$engine"); bench_shown="$bench_shown --engine $engine"
+fi
 
 if [ "$dry_run" -eq 1 ]; then
     note "--dry-run: the commands that would run, in order"
@@ -334,7 +349,7 @@ if [ "$dry_run" -eq 1 ]; then
         note "  ${compose[*]} run --rm bench cmake -S $wt -B $wt/$BUILD_DIR -DCMAKE_CXX_STANDARD=20 -DCMAKE_BUILD_TYPE=RelWithDebInfo"
         note "  ${compose[*]} run --rm bench cmake --build $wt/$BUILD_DIR -j"
         for prog in "${programs[@]}"; do
-            note "  ${compose[*]} run --rm bench bash scripts/bench.sh $wt/$BUILD_DIR/$BINARY_NAME $prog --config ${refs[$i]} --commit ${shas[$i]}$bench_shown"
+            note "  ${compose[*]} run --rm bench bash scripts/bench.sh $wt/$BUILD_DIR/$BINARY_NAME $prog --config ${label:-${refs[$i]}} --commit ${shas[$i]}$bench_shown"
         done
         [ "$clean" -eq 1 ] && note "  git worktree remove --force $wt"
         note ""
@@ -445,7 +460,7 @@ for i in "${!refs[@]}"; do
     for prog in "${programs[@]}"; do
         row=$("${compose[@]}" run --rm bench bash scripts/bench.sh \
                   "$wt/$BUILD_DIR/$BINARY_NAME" "$prog" \
-                  --config "$ref" --commit "$sha" "${bench_opts[@]+"${bench_opts[@]}"}") || {
+                  --config "${label:-$ref}" --commit "$sha" "${bench_opts[@]+"${bench_opts[@]}"}") || {
             rc=$?
             die "$EX_SOFTWARE" \
                 "measurement failed for $ref on $prog (bench.sh exited $rc)." \

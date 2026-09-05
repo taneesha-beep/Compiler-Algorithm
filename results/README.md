@@ -889,3 +889,232 @@ are exact and deterministic — but a Phase 4 session should know that the VM wi
 be measured on programs that run in tenths of a second, and should not read that
 as a reason to raise any `n`. `CLAUDE.md` forbids that for a separate reason:
 one cachegrind pass over the four costs about 230 seconds.
+
+### Phase 5, item 5.1 — the attribution table: eight rows for configuration V
+
+**Configuration V is `main` at `61996b0` run with `--engine=vm`.** It is not a commit of
+its own — the VM is a flag on the same binary that carries the tree-walker — so 5.1 had to
+settle how to measure it before measuring anything. The four decisions it took are below,
+then the tables.
+
+#### How V was measured, and why the driver grew a parameter
+
+`scripts/bench.sh` invoked its binary as `$binary $program`, with no way to pass a flag.
+Measuring V would then have run the **tree-walker** and labelled the row `V`, which is the
+one failure this project exists to refuse. So the driver gained `--engine E`, which inserts
+`--engine=E` before the program and **refuses any value but `tree` or `vm`** — the `config`
+column is the only place a row says which engine ran, and a value the binary would reject
+with exit 64 must not reach a run whose label claims otherwise. Empty means no flag at all,
+byte for byte the invocation all 60 earlier rows were taken under.
+
+`scripts/bench-ablations.sh` gained `--engine E` (passed straight through) and
+`--label NAME`, which renames the `config` column and is **refused with more than one ref**,
+since one name on two configurations is the same mislabelling in a different place.
+
+V was then measured **through the orchestrator**, like every other configuration:
+
+```
+scripts/bench-ablations.sh --engine vm   --label V      main
+scripts/bench-ablations.sh --engine tree --label V-tree main
+```
+
+#### The cache columns cross a boundary, and a control row prices it
+
+Item 2.4 found that `argv[0]`'s **length** moves cachegrind's cache columns — 9.6% of
+`bench/fib32.algo`'s D1 misses for 14 characters, binary held byte-identical. Measuring V
+through the orchestrator puts its binary at `.worktrees/61996b03b61a/build-cfg/algo`, **38
+characters, exactly H's**, so that half of the boundary is closed by construction rather
+than by argument. What remains is that V's argv gains `--engine=vm` where H's had no flag
+at all, and that `main`'s binary links four translation units H's did not.
+
+**`V-tree` is the control for both.** It is the same worktree binary, invoked by the same
+38-character path, running `--engine=tree`: everything V changes except the engine.
+
+| Program | H (`perf/cum-d`) `Ir` | V-tree `Ir` | difference |
+|---|---:|---:|---:|
+| `bench/arith.algo` | 4,403,691,178 | 4,403,695,231 | **+4,053** |
+| `bench/fib32.algo` | 8,432,437,963 | 8,432,442,016 | **+4,053** |
+| `bench/loop10m.algo` | 3,921,639,753 | 3,921,643,806 | **+4,053** |
+| `bench/vars.algo` | 2,149,802,840 | 2,149,806,857 | **+4,017** |
+
+**A fixed offset of about four thousand instructions, identical on three programs of
+different shapes and sizes** — process startup and one more argv element, not per-iteration
+work. It says the tree-walker at `main` does byte-identical work to the tree-walker at H,
+which is what Phase 4's "measured nothing, touched no interpreter source" claim asserts and
+what nothing until now had checked against a counter. Four thousand in 2.1–8.4 **billion**
+is 0.00005% to 0.0001%.
+
+So: **the `Ir` column carries the H → V step** and is the column the attribution rests on,
+as everywhere else here. The cache and branch columns are reported at V, but the comparison
+in them that is fully controlled is **V against V-tree**, one row below it in each table —
+same binary, same path, argv differing by two characters. H → V in a cache column crosses
+both a binary and an argv boundary and must be quoted with that attached.
+
+#### The lowered comparisons cost 57.00 instructions each, and this table contains none
+
+Item 4.1 lowered `<=`, `>=` and `!=` onto `GT NOT`, `LT NOT` and `EQ NOT` — one extra
+instruction per lowered comparison — and recorded that **5.1 must report its size**. Two
+halves to the answer.
+
+**None of the four benchmark programs contains a lowered comparison.** `grep -c '<=\|>=\|!='`
+over `bench/*.algo` is 0 on all four: `arith`, `loop10m` and `vars` compare with `<` and
+`fib32` with `<`. **So the cost is exactly zero in every cell of the four tables below**, and
+V's losses there are not this.
+
+Its size was measured separately, on a probe pair differing in one character-for-character
+substitution and nothing else, under the **V worktree binary with `--engine=vm`**:
+
+```
+i = 0                       i = 0
+c = 0                       c = 0
+while i < 1000000 {         while i < 1000000 {
+    if i < 1000000 {            if i <= 999999 {
+        c = c + 1                       c = c + 1
+    }                           }
+    i = i + 1                   i = i + 1
+}                           }
+print c                     print c
+```
+
+Both print `1000000`, both take the true arm on all 1,000,000 iterations, and both loop
+headers are the identical `i < 1000000`, so the two differ by exactly 1,000,000 executions
+of `NOT` and nothing else. Under `valgrind --tool=cachegrind`:
+
+| Probe | `Ir` |
+|---|---:|
+| `i < 1000000` | 1,239,672,638 |
+| `i <= 999999` | 1,296,673,045 |
+| difference over 1,000,000 lowered comparisons | **57,000,407 — 57.00 each** |
+
+**57.00 instructions, to four significant figures of a division that had no reason to come
+out round.** That is one turn of the VM's dispatch loop, and it agrees with the loop's cost
+read off a table row independently: `bench/loop10m.algo` retires 6,071,652,034 `Ir` over
+10,000,000 iterations of a body that compiles to ten instructions, i.e. about 60 per
+instruction dispatched.
+
+This is an **`Ir`-only figure taken outside the driver**, the instrument item 3.4
+legitimised for exactly this and legitimate for exactly this — `Ir` is invocation-stable to
+a few hundred counts in billions and the cache columns are not. The probes lived in
+`build-probe/` and were deleted; they are quoted above in full so the number is
+reproducible without them.
+
+#### Where this table lives
+
+**Here, in `results/README.md`, beside the Phase 3 workings the attribution is built from.**
+`README.md` is Phase 6's artefact end to end — 6.1 gives it the table as *supporting*
+material and 6.2 the headline — and 4.5 already deferred an excerpt to 6.1 on the same
+reasoning. A table written into `README.md` under 5.1's tag would be a second change wearing
+it. 5.1 assembles the table; 6.1 and 6.2 decide how much of it a reader meets first.
+
+#### The tables
+
+Δ is against the row above. Every cell is a committed row in `measurements.csv`,
+`config` in {`v1-naive-treewalk`, `perf/cum-a`…`perf/cum-d`, `V`, `V-tree`}; the percentages
+are arithmetic on those cells and nothing else.
+
+##### `bench/arith.algo`
+| Configuration | `Ir` | Δ `Ir` vs previous | `D1_misses` | `LL_misses` | `branches` | `mispredicts` | wall median (ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **N** — naive tree-walker | 15,081,690,621 | — | 20,609 | 13,115 | 2,936,317,621 | 108,015,316 | 849 |
+| **+A** — pass by reference | 13,177,690,471 | -12.62% | 20,606 | 13,097 | 2,506,317,591 | 102,015,324 | 732 |
+| **+B** — literals pre-parsed | 8,679,692,475 | -34.13% | 20,616 | 13,094 | 1,722,317,937 | 94,015,365 | 518 |
+| **+C** — enum operator dispatch | 8,563,692,611 | -1.34% | 20,609 | 13,089 | 1,768,317,895 | 88,015,356 | 520 |
+| **+D = H** — slot environment | 4,403,691,178 | -48.58% | 20,606 | 13,060 | 622,317,606 | 58,015,288 | 203 |
+| **V** — bytecode VM | 8,379,713,777 | +90.29% | 20,745 | 13,243 | 1,132,320,246 | 192,016,013 | 486 |
+| *(control)* **V-tree** — `main` on `--engine=tree` | 4,403,695,231 | — | 20,617 | 13,065 | 622,318,334 | 58,015,657 | 221 |
+
+N → H **-70.80%** · H → V **+90.29%** · N → V **-44.44%** · output `24000000` at every configuration.
+
+Control: V-tree − H = +4053 `Ir`.
+
+##### `bench/fib32.algo`
+| Configuration | `Ir` | Δ `Ir` vs previous | `D1_misses` | `LL_misses` | `branches` | `mispredicts` | wall median (ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **N** — naive tree-walker | 15,996,279,019 | — | 13,294,533 | 13,729 | 2,792,389,887 | 71,104,045 | 869 |
+| **+A** — pass by reference | 14,611,120,098 | -8.66% | 10,413,266 | 13,655 | 2,496,325,387 | 37,802,024 | 810 |
+| **+B** — literals pre-parsed | 12,781,864,895 | -12.52% | 8,709,033 | 13,650 | 2,186,162,655 | 40,767,634 | 672 |
+| **+C** — enum operator dispatch | 12,732,520,893 | -0.39% | 8,709,030 | 13,652 | 2,210,834,680 | 49,331,163 | 658 |
+| **+D = H** — slot environment | 8,432,437,963 | -33.77% | 11,870,385 | 13,494 | 1,273,560,628 | 41,664,747 | 431 |
+| **V** — bytecode VM | 5,344,942,619 | -36.61% | 20,593 | 13,322 | 691,133,183 | 107,024,246 | 341 |
+| *(control)* **V-tree** — `main` on `--engine=tree` | 8,432,442,016 | — | 11,901,112 | 13,509 | 1,273,561,356 | 31,397,591 | 413 |
+
+N → H **-47.29%** · H → V **-36.61%** · N → V **-66.59%** · output `2178309` at every configuration.
+
+Control: V-tree − H = +4053 `Ir`.
+
+##### `bench/loop10m.algo`
+| Configuration | `Ir` | Δ `Ir` vs previous | `D1_misses` | `LL_misses` | `branches` | `mispredicts` | wall median (ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **N** — naive tree-walker | 13,981,640,413 | — | 20,285 | 12,916 | 2,750,309,812 | 50,014,551 | 660 |
+| **+A** — pass by reference | 12,611,640,285 | -9.80% | 20,280 | 12,902 | 2,450,309,787 | 30,014,551 | 603 |
+| **+B** — literals pre-parsed | 8,891,640,413 | -29.50% | 20,280 | 12,894 | 1,730,309,809 | 10,014,570 | 434 |
+| **+C** — enum operator dispatch | 8,821,640,456 | -0.79% | 20,279 | 12,892 | 1,750,309,803 | 20,014,557 | 431 |
+| **+D = H** — slot environment | 3,921,639,753 | -55.55% | 20,272 | 12,868 | 480,309,660 | 20,014,528 | 175 |
+| **V** — bytecode VM | 6,071,652,034 | +54.82% | 20,309 | 12,987 | 760,311,358 | 100,015,073 | 375 |
+| *(control)* **V-tree** — `main` on `--engine=tree` | 3,921,643,806 | — | 20,283 | 12,879 | 480,310,388 | 20,014,912 | 169 |
+
+N → H **-71.95%** · H → V **+54.82%** · N → V **-56.57%** · output `10000000` at every configuration.
+
+Control: V-tree − H = +4053 `Ir`.
+
+##### `bench/vars.algo`
+| Configuration | `Ir` | Δ `Ir` vs previous | `D1_misses` | `LL_misses` | `branches` | `mispredicts` | wall median (ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **N** — naive tree-walker | 12,854,819,055 | — | 3,021,434 | 13,353 | 3,288,340,020 | 217,016,313 | 900 |
+| **+A** — pass by reference | 11,949,818,523 | -7.04% | 21,427 | 13,336 | 3,093,339,900 | 214,016,277 | 837 |
+| **+B** — literals pre-parsed | 11,970,818,501 | +0.18% | 21,423 | 13,337 | 3,093,339,900 | 214,016,373 | 831 |
+| **+C** — enum operator dispatch | 11,963,818,820 | -0.06% | 21,425 | 13,325 | 3,143,339,878 | 214,016,272 | 829 |
+| **+D = H** — slot environment | 2,149,802,840 | -82.03% | 21,371 | 13,275 | 316,336,539 | 5,015,899 | 95 |
+| **V** — bytecode VM | 4,039,833,836 | +87.92% | 21,602 | 13,481 | 533,339,806 | 96,016,591 | 223 |
+| *(control)* **V-tree** — `main` on `--engine=tree` | 2,149,806,857 | — | 21,390 | 13,280 | 316,337,263 | 5,016,304 | 95 |
+
+N → H **-83.28%** · H → V **+87.92%** · N → V **-68.57%** · output `136000000` at every configuration.
+
+Control: V-tree − H = +4017 `Ir`.
+
+#### What the table says, both directions
+
+**N → V is a 44–69% reduction in instructions retired. H → V is a LOSS on three programs
+out of four**, and the second sentence is the one this project exists to publish:
+
+| Program | N → H | H → V | N → V |
+|---|---:|---:|---:|
+| `bench/arith.algo` | −70.80% | **+90.29%** | −44.44% |
+| `bench/fib32.algo` | −47.29% | **−36.61%** | −66.59% |
+| `bench/loop10m.algo` | −71.95% | **+54.82%** | −56.57% |
+| `bench/vars.algo` | −83.28% | **+87.92%** | −68.57% |
+
+**The bytecode VM retires nearly twice the instructions of the hardened tree-walker on
+`arith` and `vars`, and half again as many on `loop10m`.** It wins on `fib32` alone, by
+36.61%, which is the one program of the four that calls a function 7,049,155 times: the VM
+replaces `callFunction`'s recursion, argument vector and frame allocation with a push onto
+a stack it already owns. Against N — the comparison a project that had skipped Phase 3
+would have published — V looks like a 44–69% win everywhere. **Against the tree-walker with
+four unforced inefficiencies removed, it is a win on one program in four.** That difference
+is Phase 3's entire return.
+
+The branch columns say the same thing from the other side. V's `mispredicts` are **3.3x**
+H's on `arith` (192,016,013 against 58,015,288), **5.0x** on `loop10m`, **19.1x** on `vars`
+and **2.6x** on `fib32` — the single indirect dispatch every bytecode VM funnels its whole
+program through, against a tree-walker whose call sites are spread across the code and each
+predictable on its own.
+
+**And the loss comes with a win that is not in `Ir` at all.** V's `D1_misses` are ~20,600
+on all four programs — including `bench/fib32.algo`, where H's are **11,870,385** and
+V-tree's 11,901,112. **The VM removes 99.83% of that program's D1 misses**, because a frame
+is a slot range on a stack it already touched rather than a heap block per call. V vs V-tree
+is the controlled form of that comparison (same binary, same 38-character path); H → V
+crosses the argv and binary boundary the control row above prices, and the direction and
+the order of magnitude survive it either way.
+
+Two further things the tables record and 5.1 does not explain:
+
+- **The cumulative `+B` step on `bench/vars.algo` is positive** (+20,999,978), where B in
+  isolation moved that program by 23 instructions in 12.85 billion. The A×B interaction is
+  recorded in the item-3.2 section above as exactly one instruction per `IdentifierNode`
+  evaluation. **Item 5.2 owns the residual**; this row is one of its inputs, not an
+  explanation of it.
+- **Wall clock at V is 223–486 ms**, all four below the 0.5–5 s acceptance band's floor, as
+  H's already were. Nothing is invalidated and **no `n` was raised**: the band was set on
+  the baseline, wall clock is narrative only, and cachegrind's counts are deterministic at
+  any size.
