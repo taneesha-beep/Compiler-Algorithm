@@ -17,8 +17,10 @@
 >
 > **There is no performance claim on this page.** Item 4.1 runs no measurement,
 > and `CLAUDE.md` rule 2 forbids writing a number that was not produced by a
-> command. Where a cost is real but unmeasured it is written `<pending>`, and
-> item 5.1 is where it is filled in.
+> command. > Where a cost is real but unmeasured it is written `<pending>`. **Item 5.1 filled in
+> the lowered-comparison cost on 2026-09-05 — 57.00 instructions each; see below.** The
+> one remaining `<pending>` on this page, the cost of the operand encoding's extra byte,
+> is deliberate: no ablation prices it, so there is nothing to measure it against.
 
 ---
 
@@ -226,7 +228,15 @@ exact on this language's values — integers are totally ordered, so
 it lands in whichever direction it lands, and it belongs in the **H → V**
 comparison item 5.1 reports rather than being discovered there: the VM is not
 uniformly doing less work than the tree-walker, and this is one of the places
-it is doing more. The size of it is `<pending>`.
+it is doing more. **Measured at item 5.1: 57.00 instructions per lowered comparison.** A probe pair
+differing by one substitution — `i < 1000000` against `i <= 999999`, identical loop
+header, identical 1,000,000 true arms, both printing `1000000` — retired 1,239,672,638
+and 1,296,673,045 `Ir` under `--engine=vm`, a difference of 57,000,407 over exactly
+1,000,000 lowered comparisons. That is one turn of the VM's dispatch loop, and it agrees
+with the ~60 `Ir` per instruction dispatched that `bench/loop10m.algo`'s committed row
+gives independently. **None of the four benchmark programs contains a lowered
+comparison** — all four compare with `<` — so the cost is exactly zero in every cell of
+5.1's table, and the losses recorded there are not this. Workings in `results/README.md`.
 
 *The type fault must still name the operator the programmer wrote.* `1 <= true`
 faults in the tree-walker with `operator '<=' cannot be applied to integer and
