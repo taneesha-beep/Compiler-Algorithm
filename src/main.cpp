@@ -7,6 +7,7 @@
 
 #include "compiler.h"
 #include "diagnostic.h"
+#include "disassembler.h"
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
@@ -61,12 +62,33 @@ int main(int argc, char *argv[])
     };
     Engine engine = Engine::Tree;
 
+    // WHAT --dump DOES INSTEAD. It compiles and prints the chunk, and does not
+    // run the program.
+    //
+    // IT GOES TO STDOUT, WHERE --trace GOES TO STDERR, AND THE TWO ARE NOT
+    // INCONSISTENT. --trace narrates a run that is happening anyway, so it has
+    // to stay off the stream the program is writing to. --dump replaces the
+    // run: there is no program output to keep clear of, the disassembly is the
+    // thing the tool was asked to produce, and `algo --dump f.algo > x.txt` is
+    // how an excerpt is captured.
+    //
+    // It is orthogonal to --engine. A chunk is not an engine's property — it
+    // is what --engine=vm would have executed — so --engine is accepted
+    // alongside and has nothing to select between. `--dump=anything` is not a
+    // spelling of it: the flag takes no value, so that falls into the unknown
+    // option arm below and exits 64, which is --engine's convention.
+    bool dump = false;
+
     for (int i = 1; i < argc; i++)
     {
         const std::string arg = argv[i];
         if (arg == "--trace")
         {
             trace = true;
+        }
+        else if (arg == "--dump")
+        {
+            dump = true;
         }
         else if (arg.rfind("--engine=", 0) == 0)
         {
@@ -109,7 +131,7 @@ int main(int argc, char *argv[])
     {
         std::cerr << renderToolError(program, "no input file")
                   << "usage: " << program
-                  << " [--trace] [--engine=tree|vm] <input_file>" << std::endl;
+                  << " [--trace] [--dump] [--engine=tree|vm] <input_file>" << std::endl;
         return ExitCode::Usage;
     }
 
@@ -188,9 +210,10 @@ int main(int argc, char *argv[])
             narrate << "=== Stage 4: Output ===" << std::endl;
         }
 
-        // Stage 4: Execute — the only stage that writes to stdout.
+        // Stage 4: Execute — or, under --dump, disassemble instead of executing.
+        // Either way this is the only stage that writes to stdout.
         //
-        // ON WHY BOTH ARMS LIVE IN THIS SCOPE. `SpanEntry::op` in a chunk points
+        // ON WHY EVERY ARM LIVES IN THIS SCOPE. `SpanEntry::op` in a chunk points
         // into `BinOpNode::op` / `UnaryOpNode::op`, and the chunk owns none of
         // that text — so **the tree must outlive the chunk compiled from it**.
         // Here that is free, `ast` being a local of the same `try` block. The
@@ -199,7 +222,14 @@ int main(int argc, char *argv[])
         // the pointers stay non-null and read as empty strings, so a fault
         // renders `operator '' cannot be applied to ...` — which is exactly how
         // item 4.2's first acceptance driver went wrong. Do not extract it.
-        if (engine == Engine::Vm)
+        if (dump)
+        {
+            if (trace)
+                narrate << "  Disassembling; the program is not run." << std::endl;
+            const Chunk chunk = compile(ast, slots);
+            disassemble(chunk, std::cout);
+        }
+        else if (engine == Engine::Vm)
         {
             if (trace)
                 narrate << "  Engine: bytecode VM" << std::endl;

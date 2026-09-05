@@ -35,7 +35,8 @@ add_library(algo_core STATIC
     src/resolver.cpp
     src/interpreter.cpp
     src/compiler.cpp
-    src/vm.cpp)
+    src/vm.cpp
+    src/disassembler.cpp)
 target_include_directories(algo_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 add_executable(algo src/main.cpp)
@@ -99,6 +100,13 @@ add_test(NAME compiler_test COMMAND compiler_test ${CMAKE_SOURCE_DIR})
 add_executable(vm_test tests/vm_test.cpp)
 target_link_libraries(vm_test PRIVATE algo_core)
 add_test(NAME vm_test COMMAND vm_test)
+
+# Item 4.5. The disassembler is checked against disassemblies written out by
+# hand, including a chunk no compiler could produce: an unknown byte, and an
+# operand-bearing opcode with no room for its operand.
+add_executable(disassembler_test tests/disassembler_test.cpp)
+target_link_libraries(disassembler_test PRIVATE algo_core)
+add_test(NAME disassembler_test COMMAND disassembler_test)
 
 # Golden-file cases: run tests/<name>.algo and compare stdout against
 # tests/<name>.expected, plus stderr and the exit code where the case supplies
