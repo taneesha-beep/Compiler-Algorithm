@@ -4,9 +4,10 @@
 > model and the compiler version to be written down, because every published
 > number is meaningless without them. That is what is here, together with the
 > decisions 2.1 had to settle before any number could be taken at all.
-> The **Boundary of the claim** section at the end is item **5.3**'s to fill in;
-> it is stubbed here so that it has somewhere to land rather than being bolted
-> on after the numbers exist.
+> The **Boundary of the claim** section at the end was item **5.3**'s to fill
+> in, and it is filled in. It was stubbed from the start so that limitations had
+> somewhere to land as they were found, rather than being bolted on after the
+> numbers existed.
 
 Every number in this repository is produced inside the container described
 below. Nothing is measured on the host.
@@ -371,10 +372,20 @@ stopped container behind; they are harmless but they accumulate.
 
 ## Boundary of the claim
 
-> **Item 5.3 fills this in.** It is stubbed here so the limitations sit in the
-> same file as the platform that produced them.
+> **Item 5.3 closes this section**, and closing it is the item's whole content.
+> Most of what follows was not written by 5.3: each entry was left by the item
+> that ran into it, at the time it ran into it, so that a limitation is recorded
+> by the session that has the evidence for it rather than reconstructed later by
+> one that does not. 5.3 audited what was here, added the four entries no item
+> had yet been in a position to write — the scope of the whole result, the
+> locality that ablation E was cut before it could separate, the boundary the
+> H → V cache columns cross, and the cycle-level column that does not exist on
+> this platform — and stopped.
 
-Two entries already belong here and are recorded now so they are not lost:
+**A limitation stated before it is found is a credential; the same limitation
+found by a reader is a wound.** Nothing below is softened, and nothing below is
+a result wearing a caveat's clothes. The question each entry answers is *what
+does the attribution not establish*.
 
 - **The simulated cache hierarchy is not this machine's hierarchy** — and on
   arm64 it does not even attempt to be, as the *simulated cache model* section
@@ -862,3 +873,143 @@ Two entries already belong here and are recorded now so they are not lost:
   already has eleven. If a Phase 4 comparison ever needs a longer-running
   program, that is a new benchmark with its own justification, not a larger `n`
   on an existing one.
+
+- **The whole result is one machine, one operating system, one compiler, one
+  optimisation level and four programs the author wrote.** Left by item 5.3, and
+  it is the widest boundary on this list — every other entry narrows a figure,
+  this one bounds all of them at once.
+
+  *One machine and one operating system.* Every committed row is arm64, taken
+  inside the container described at the top of this file, on the CPU the
+  *Recorded platform* section names. Nothing was measured on the host, which is
+  not a preference — valgrind does not meaningfully support arm64 macOS — and
+  nothing was measured on x86_64, which is why item 5.4's CI instruction-count
+  gate was cut rather than written: CI runs `ubuntu-latest`, and a count taken on
+  one architecture may not be compared to a count taken on the other.
+
+  *One compiler.* GCC 13.3.0. The CI matrix builds and tests under both GCC and
+  Clang, so the language's behaviour is checked twice, but CI builds unoptimised
+  and measures nothing — **no number in this repository has ever been produced by
+  Clang.** Three entries below turn on what GCC chose to emit: A's non-atomic
+  reference count, C's character chain in place of the source's string
+  comparisons, and the code-generation term in the residual. Item 3.3's is the
+  sharpest of them — a compiler that emitted C's chain literally, or that turned
+  the `switch` into a jump table, would give C a different and probably much
+  larger number **on the same source**.
+
+  *One optimisation level.* `-O2 -g -DNDEBUG`, set in `Dockerfile.bench`. The
+  *Optimisation level* section above records why, and records what `-O0` costs.
+  An ablation measured unoptimised would be credited with work the compiler
+  declined to attempt, and the `NDEBUG` half of that flag is itself a boundary —
+  see the `undefined variable` entry below.
+
+  *Four programs, chosen rather than sampled.* `bench/fib32.algo`,
+  `bench/loop10m.algo`, `bench/arith.algo` and `bench/vars.algo` were written to
+  load four different parts of the interpreter, and they are not a sample of
+  anything. They are not representative of any workload, they were not drawn
+  from a corpus, and the author knew which ablations were coming when they were
+  written. Where a per-visit cost model holds across all four it holds across
+  four points of one author's choosing. The programs are also the reason two
+  figures in this document travel badly on their own: **D's is a property of a
+  20-name frame**, and the H → V figures are dominated by whether a program calls
+  a function — `bench/fib32.algo` is the only one of the four that does, and it
+  is the only one of the four where the VM wins.
+
+- **Locality is not separated out from the architectural result, so the H → V
+  number is an upper bound rather than an attribution.** Left by item 5.3,
+  discharging a cost that item 3.5's cut incurred on 2026-08-30.
+
+  Ablation E — arena-allocated AST nodes — was the ablation that would have
+  priced node layout and traversal locality inside the tree-walker. It was cut,
+  and it stays cut; the reasoning is in the roadmap, and part of it was that a
+  bytecode chunk is contiguous by construction, so locality is precisely one of
+  the things the architectural substitution delivers for free. That reasoning is
+  sound and the price is real: **no row in this repository separates locality
+  from dispatch, from node indirection, or from anything else that changes
+  between a tree-walker and a VM.** Whatever the contiguous chunk and the
+  stack-allocated frames are worth is inside the H → V delta, unlabelled.
+
+  So H → V bounds the architectural effect **from above**, because it contains at
+  least one named cause that nothing here isolates. It may be quoted as *what
+  replacing the back end did*, never as *what the architecture is worth*. The
+  same applies to the direction the result actually runs in: H → V is a **loss**
+  on three programs of four in instructions retired — `arith` **+90.29%**,
+  `loop10m` **+54.82%**, `vars` **+87.92%** — and a win only on `bench/fib32.algo`
+  at **−36.61%**. An upper bound on a mixed result bounds the losses too.
+
+  **And N → V must never be quoted without H → V beside it.** N → V is −44.44%,
+  −66.59%, −56.57% and −68.57%, which is a far more flattering set of numbers and
+  a dishonest one: it credits the bytecode VM with the four Phase 3 ablations,
+  every one of which is a change to the *tree-walker* that the VM did not make
+  and does not contain. Measuring an architecture against an unhardened baseline
+  is the specific comparison this project exists to refuse, and Phase 3 runs
+  before Phase 4 for no other reason.
+
+- **The H → V comparison crosses an argv-and-binary boundary, and only its
+  instruction column survives that crossing intact.** Left by item 5.1, and
+  priced rather than argued.
+
+  H and V are not the same binary invoked the same way. V's `argv` gains
+  `--engine=vm`, and V's binary links four translation units H's does not — the
+  Phase 4 back end. Two mechanisms already on this list say that both of those
+  can move a cache column without any change in the work done: the environment
+  and argv block shifts the initial process layout, and the length of the path
+  the binary is invoked by moves `bench/fib32.algo`'s D1 misses by 9.6% for
+  fourteen characters.
+
+  **`V-tree` is the control that prices it**, and it is the strongest number item
+  5.1 produced: the same worktree binary at the same 38-character path, invoked
+  with `--engine=tree`, so that everything except the engine selected is held
+  fixed. It reproduces H's instruction counts to a **fixed +4,053** on `arith`,
+  `fib32` and `loop10m` and **+4,017** on `vars` — a constant, not a rate, which
+  is startup and one argv element and no per-iteration work at all. Against
+  deltas in the billions that is nothing, so **`Ir` carries the H → V step
+  directly.**
+
+  The cache columns do not get the same pass. **The fully controlled cache
+  comparison is V against V-tree, not V against H** — for example the VM's
+  removal of **99.83%** of `bench/fib32.algo`'s D1 misses is 20,593 against
+  V-tree's 11,901,112, and it is stated that way in `results/README.md` for this
+  reason. Reading V's cache columns against H's would fold the argv difference
+  and the extra translation units into the architectural result.
+
+  A side effect worth recording: this is also the first *counter-based* check on
+  Phase 4's claim to have measured nothing and touched no interpreter source. A
+  fixed four-thousand-count offset across four programs is what that claim
+  predicts, and it is what the rows show.
+
+- **The cycle-level half of the mechanism was never measurable on this platform,
+  and no part of it was estimated.** Left by item 5.2 and written here by item
+  5.3, because a reader is entitled to know which half of an explanation rests on
+  a column that does not exist.
+
+  `perf_cycles`, `perf_instructions` and `perf_ipc` are **empty in all 68 rows**,
+  and they always were. `perf` does not run here: the packaged tools are built for
+  kernel 6.8 and Docker Desktop runs LinuxKit 6.12.68, so it exits 2. Item 2.3
+  treated `perf` as optional and every number the attribution rests on is
+  simulated, which is why this blocks nothing — but it does bound what may be
+  said.
+
+  The roadmap's predicted mechanism for a positive interaction residual is
+  **memory stalls hiding each other's cost**, which is a claim about *cycles*.
+  Item 5.2 reported that mechanism as **predicted but not observed**, and the
+  evidence for "not observed" is flatness in columns that do exist — `LL_misses`
+  staying inside a band of tens of counts across all nine Phase 3 configurations
+  on programs retiring 12.8 to 16.0 billion instructions, and `arith` and
+  `loop10m` D1 misses moving by single digits while their instruction counts fall
+  over 70%. **That is an absence of the traffic a stall would need, not a
+  measurement of stalls.** No IPC was estimated, and none may be: dividing a
+  committed `Ir` by the wall-clock column would manufacture exactly the number
+  the item declined to claim, from a column this document reports as narrative
+  only.
+
+  Two smaller consequences of the same gap. The residual's positive sign is
+  attributed to **code generation**, which is legitimate precisely because it is
+  visible in instructions retired, where nothing can hide behind a stall — but
+  that attribution establishes a second source, not the absence of the first.
+  And the `mispredicts` column does **not** decompose across the four ablations
+  the way `branches` does; `branches` has a residual of exactly zero on all four
+  programs and `mispredicts` is mixed in sign, so the branch column's additivity
+  is a property of these four ablations rather than of any predictor — and the
+  predictor in question is valgrind's model, not this machine's, as the first
+  entry in this section says of every cache and branch figure here.
