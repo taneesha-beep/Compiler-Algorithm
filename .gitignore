@@ -25,3 +25,4 @@ cmake-build*
 # a bare `*.md` would silently ignore all three.
 /*.md
 !/README.md
+TECHNICAL-REPORT.md

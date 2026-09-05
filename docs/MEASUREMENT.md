@@ -207,8 +207,12 @@ Three consequences to keep in view:
 
 1. **The measured binary is not the tested binary.** `ctest` on the host builds
    unoptimised with AppleClang; the bench build is GCC 13.3.0 at `-O2`. So the
-   optimised configuration is tested too: `ctest --test-dir build-bench` inside
-   the container passes **32/32**.
+   optimised configuration is tested too, by `ctest --test-dir build-bench`
+   inside the container. **The `32/32` recorded here was the suite as it stood
+   then** — item 4.4 later registered every golden case against both engines and
+   4.5 added an eighth unit binary, so the suite now holds **66** tests. The
+   in-container run has not been re-taken since, so its current result is
+   `<pending>`; re-run it and write down what it prints.
 2. **The bench build gets a directory of its own**, `build-bench/`. The
    repository is bind-mounted, so building into `build/` would overwrite the
    host's AppleClang objects with Linux GCC ones and leave neither tree usable.
@@ -869,10 +873,10 @@ does the attribution not establish*.
   measuring a VM on programs that finish in tenths of a second may want to raise
   an `n` to "use the band properly". **Do not** — `CLAUDE.md` refuses it for an
   independent reason, that one cachegrind pass over the four programs costs
-  about 230 seconds and Phase 4 adds another configuration to a series that
-  already has eleven. If a Phase 4 comparison ever needs a longer-running
-  program, that is a new benchmark with its own justification, not a larger `n`
-  on an existing one.
+  about 230 seconds and Phase 4 adds two more configurations — V and its
+  `V-tree` control — to a series that already has nine. If a Phase 4 comparison
+  ever needs a longer-running program, that is a new benchmark with its own
+  justification, not a larger `n` on an existing one.
 
 - **The whole result is one machine, one operating system, one compiler, one
   optimisation level and four programs the author wrote.** Left by item 5.3, and
@@ -950,9 +954,11 @@ does the attribution not establish*.
   priced rather than argued.
 
   H and V are not the same binary invoked the same way. V's `argv` gains
-  `--engine=vm`, and V's binary links four translation units H's does not — the
-  Phase 4 back end. Two mechanisms already on this list say that both of those
-  can move a cache column without any change in the work done: the environment
+  `--engine=vm`, and V's binary links three translation units H's does not — the
+  Phase 4 back end: `src/compiler.cpp`, `src/vm.cpp` and `src/disassembler.cpp`,
+  which take `algo_core` from five sources to eight. Two mechanisms already on
+  this list say that both of those can move a cache column without any change in
+  the work done: the environment
   and argv block shifts the initial process layout, and the length of the path
   the binary is invoked by moves `bench/fib32.algo`'s D1 misses by 9.6% for
   fourteen characters.

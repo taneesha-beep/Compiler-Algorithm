@@ -127,7 +127,7 @@ this file *during* a measurement run reads it from inside that image.)
 
 All thirteen raw events are kept, not just the five the roadmap names. One
 cachegrind pass over the four benchmark programs costs about 230 seconds and
-Phase 3 measures eleven configurations; dropping a counter now would mean
+Phase 3 measures nine configurations; dropping a counter now would mean
 re-running the whole series later to recover it.
 
 ## What is in the file today
@@ -925,7 +925,9 @@ Item 2.4 found that `argv[0]`'s **length** moves cachegrind's cache columns — 
 through the orchestrator puts its binary at `.worktrees/61996b03b61a/build-cfg/algo`, **38
 characters, exactly H's**, so that half of the boundary is closed by construction rather
 than by argument. What remains is that V's argv gains `--engine=vm` where H's had no flag
-at all, and that `main`'s binary links four translation units H's did not.
+at all, and that `main`'s binary links three translation units H's did not —
+`src/compiler.cpp`, `src/vm.cpp` and `src/disassembler.cpp`, which take `algo_core` from
+five sources at H to eight at V.
 
 **`V-tree` is the control for both.** It is the same worktree binary, invoked by the same
 38-character path, running `--engine=tree`: everything V changes except the engine.
@@ -989,8 +991,10 @@ of `NOT` and nothing else. Under `valgrind --tool=cachegrind`:
 **57.00 instructions, to four significant figures of a division that had no reason to come
 out round.** That is one turn of the VM's dispatch loop, and it agrees with the loop's cost
 read off a table row independently: `bench/loop10m.algo` retires 6,071,652,034 `Ir` over
-10,000,000 iterations of a body that compiles to ten instructions, i.e. about 60 per
-instruction dispatched.
+10,000,000 iterations of a body that compiles to **nine** instructions — counted off
+`./build/algo --dump bench/loop10m.algo`, offsets 0006 to 0026 — i.e. **67.46** `Ir` per
+instruction dispatched. That divisor is whole-process `Ir` over the loop's own dispatches,
+so 67.46 is an upper bound on one turn and 57.00 falls on the right side of it.
 
 This is an **`Ir`-only figure taken outside the driver**, the instrument item 3.4
 legitimised for exactly this and legitimate for exactly this — `Ir` is invocation-stable to

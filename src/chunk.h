@@ -102,8 +102,8 @@ inline const char *opCodeName(OpCode op)
     return "?";
 }
 
-// Whether the opcode is followed by a two-byte operand. Five of the nineteen
-// are; the other fourteen are one byte on their own. A decoder — the VM's
+// Whether the opcode is followed by a two-byte operand. Six of the nineteen
+// are; the other thirteen are one byte on their own. A decoder — the VM's
 // fetch, the disassembler's walk — needs this to know how far the next
 // instruction is, so it lives beside the enum rather than in either of them.
 inline bool opCodeHasOperand(OpCode op)

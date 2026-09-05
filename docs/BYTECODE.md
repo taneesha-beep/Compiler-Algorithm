@@ -73,7 +73,7 @@ function bodies in declaration order.
 ### Operand encoding
 
 * An instruction is **one opcode byte**, optionally followed by **one two-byte
-  operand**. Five of the nineteen opcodes take an operand; the other fourteen
+  operand**. Six of the nineteen opcodes take an operand; the other thirteen
   are a byte on their own. So every instruction is **1 or 3 bytes**, and
   `opCodeHasOperand` / `instructionLength` in `src/chunk.h` are what a decoder
   walks the stream with.
@@ -240,11 +240,13 @@ it is doing more. **Measured at item 5.1: 57.00 instructions per lowered compari
 differing by one substitution — `i < 1000000` against `i <= 999999`, identical loop
 header, identical 1,000,000 true arms, both printing `1000000` — retired 1,239,672,638
 and 1,296,673,045 `Ir` under `--engine=vm`, a difference of 57,000,407 over exactly
-1,000,000 lowered comparisons. That is one turn of the VM's dispatch loop, and it agrees
-with the ~60 `Ir` per instruction dispatched that `bench/loop10m.algo`'s committed row
-gives independently. **None of the four benchmark programs contains a lowered
-comparison** — all four compare with `<` — so the cost is exactly zero in every cell of
-5.1's table, and the losses recorded there are not this. Workings in `results/README.md`.
+1,000,000 lowered comparisons. That is one turn of the VM's dispatch loop, and it sits just
+below the **67.46** `Ir` per instruction dispatched that `bench/loop10m.algo`'s committed row
+gives independently — 6,071,652,034 `Ir` over 10,000,000 turns of a **nine**-instruction
+body, counted off `./build/algo --dump bench/loop10m.algo` at offsets 0006 to
+0026. **None of the four benchmark programs contains a lowered comparison** — all
+four compare with `<` — so the cost is exactly zero in every cell of 5.1's table,
+and the losses recorded there are not this. Workings in `results/README.md`.
 
 *The type fault must still name the operator the programmer wrote.* `1 <= true`
 faults in the tree-walker with `operator '<=' cannot be applied to integer and
@@ -316,7 +318,7 @@ overflow**. It is the VM's own resource, so it is 4.3's to define.
 ## The opcode table
 
 Nineteen opcodes. **Operand** is the meaning of the two-byte operand, or *—* for
-the fourteen that take none. **Stack** is the net effect on the operand stack:
+the thirteen that take none. **Stack** is the net effect on the operand stack:
 `−2 +1` means two values are popped and one pushed.
 
 | Opcode | Operand | Stack | Effect |

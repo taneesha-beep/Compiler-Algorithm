@@ -53,8 +53,13 @@
 #
 #      So `.worktrees/<12 hex of the commit>/build-cfg/algo` is EXACTLY 38
 #      characters for every configuration, always. Naming worktrees after refs
-#      would have made `perf/iso-a` and `perf/cum-a` differ in path length and
-#      therefore in D1 — an ablation delta manufactured entirely by a tag name.
+#      would NOT have been uniform: `.worktrees/v1-naive-treewalk/build-cfg/algo`
+#      is 43 characters, every `perf/*` tag is 36 and `main` is 30. That puts
+#      configuration N seven characters from every ablation tag — the series'
+#      primary comparison — and so gives it a different D1: an ablation delta
+#      manufactured entirely by a tag name, and a wider gap than the fourteen
+#      characters measured above. (`perf/iso-a` and `perf/cum-a` happen to be
+#      the same length; the pairs that bite are the ones that are not.)
 #      A guard below refuses the series if the lengths ever stop matching.
 #
 # ONE CONSEQUENCE FOR PHASE 3, and it is not optional: 38 characters is not 16,

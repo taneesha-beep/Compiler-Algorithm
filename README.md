@@ -72,7 +72,7 @@ one place in this repository whose job is to say what the attribution does *not*
   this step unlabelled. An upper bound on a mixed result bounds the losses too.
 - **N → V is never quoted on its own**, here or anywhere else in the repository.
 - **The controlled *cache* comparison is V against its own `V-tree` control, not V against
-  H** — V's command line gains an argument and its binary links four translation units H's
+  H** — V's command line gains an argument and its binary links three translation units H's
   does not. That control prices the boundary at a fixed **+4,053** instructions (+4,017 on
   `vars`): a constant, not a rate, which is why the instruction column carries H → V and the
   cache columns do not.
