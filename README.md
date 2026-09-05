@@ -166,6 +166,13 @@ the one `JUMP` at `0043` serves the backward branch to a `while` header exactly 
 the forward exit from an `if`. The format is documented in
 [`docs/BYTECODE.md`](docs/BYTECODE.md).
 
+A 24-second terminal recording puts those two listings and the differential suite in one
+clip — the diagnostic above, this disassembly, then all 29 golden cases running under each
+engine in turn: [`docs/demo.cast`](docs/demo.cast), played with `asciinema play
+docs/demo.cast` and re-recorded by [`docs/demo.sh`](docs/demo.sh). It shows **no timings**,
+deliberately: nothing on a developer's machine is a measurement here, and the numbers above
+are cachegrind counts taken under Linux.
+
 Setup and build instructions are [below](#build--run).
 
 ---
