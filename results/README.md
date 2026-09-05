@@ -1118,3 +1118,160 @@ Two further things the tables record and 5.1 does not explain:
   H's already were. Nothing is invalidated and **no `n` was raised**: the band was set on
   the baseline, wall clock is narrative only, and cachegrind's counts are deterministic at
   any size.
+
+### Phase 5, item 5.2 — the residual between the isolated sum and the cumulative total
+
+**Item 5.2 measured nothing.** Every number below is arithmetic on rows already in
+`results/measurements.csv`, which held 68 rows before this item and holds 68 after it. The
+labels read are `v1-naive-treewalk` (configuration **N**), `perf/iso-a`…`perf/iso-d` and
+`perf/cum-a`…`perf/cum-d` (`perf/cum-d` is configuration **H**). The `baseline`, `V`,
+`V-tree` and `main` rows are not read: the residual is defined over N and H, and the
+`baseline` rows are not cache-comparable to the Phase 3 series anyway.
+
+#### The three quantities
+
+For each program: the **isolated sum** is `Σ over x∈{a,b,c,d} of (Ir[N] − Ir[iso-x])`, the
+**cumulative** is `Ir[N] − Ir[cum-d]`, and the **residual** is the first minus the second —
+how much the four ablations measured one at a time over-count what they achieve together.
+
+| | `bench/arith.algo` | `bench/fib32.algo` | `bench/loop10m.algo` | `bench/vars.algo` |
+|---|---|---|---|---|
+| `Ir` at N | 15,081,690,621 | 15,996,279,019 | 13,981,640,413 | 12,854,819,055 |
+| `Ir` at H | 4,403,691,178 | 8,432,437,963 | 3,921,639,753 | 2,149,802,840 |
+| isolated sum | 10,685,999,439 | 7,630,808,030 | 10,080,000,660 | 10,723,016,123 |
+| cumulative (N → H) | 10,677,999,443 | 7,563,841,056 | 10,060,000,660 | 10,705,016,215 |
+| **residual** | **7,999,996** | **66,966,974** | **20,000,000** | **17,999,908** |
+| residual as a share of the cumulative | 0.0749% | 0.8854% | 0.1988% | 0.1681% |
+| cumulative as a share of N | 70.80% | 47.29% | 71.95% | 83.28% |
+
+**The residual is positive on all four programs**, which is the gate the progress ledger
+set on this item. The parts do sum to more than the whole, everywhere.
+
+It is also small. The four ablations remove 47–83% of N's instructions; measuring them one
+at a time over-counts that by **under nine tenths of one percent on the worst program and
+under two tenths on three of four**. The attribution Phase 3 assembled is additive to
+within that, and the four isolated deltas it rests on can be read as near-independent
+contributions rather than as figures that only mean something in one particular order.
+
+The four isolated deltas themselves, for scale:
+
+| | `arith` | `fib32` | `loop10m` | `vars` |
+|---|---|---|---|---|
+| A (`perf/iso-a`) | 1,904,000,150 | 1,385,158,921 | 1,370,000,128 | 905,000,532 |
+| B (`perf/iso-b`) | 4,511,997,996 | 1,846,878,088 | 3,739,999,872 | 23 |
+| C (`perf/iso-c`) | 113,999,864 | 42,294,848 | 59,999,957 | 5,999,681 |
+| D (`perf/iso-d`) | 4,156,001,429 | 4,356,476,173 | 4,910,000,703 | 9,812,015,887 |
+
+#### The residual is exactly the three pairwise interactions already measured
+
+The cumulative total telescopes into four marginals — `M_A = Ir[N] − Ir[cum-a]`,
+`M_B = Ir[cum-a] − Ir[cum-b]`, and so on — so the residual decomposes with no remainder
+into four per-ablation terms, each of the form *isolated delta minus cumulative marginal*:
+
+| term | `arith` | `fib32` | `loop10m` | `vars` |
+|---|---|---|---|---|
+| `I_A − M_A` | 0 | 0 | 0 | 0 |
+| `I_B − M_B` | 14,000,000 | 17,622,885 | 20,000,000 | 21,000,001 |
+| `I_C − M_C` | −2,000,000 | −7,049,154 | −10,000,000 | −1,000,000 |
+| `I_D − M_D` | −4,000,004 | 56,393,243 | 10,000,000 | −2,000,093 |
+| **sum = residual** | **7,999,996** | **66,966,974** | **20,000,000** | **17,999,908** |
+
+**A's term is identically zero by construction**, not by measurement: `perf/iso-a` and
+`perf/cum-a` are the same commit (`6036d06`), measured twice under two labels, because
+there is nothing before A for the cumulative order to have applied. The other three rows
+are the three pairwise interactions items 3.2, 3.3 and 3.4 already reported, at the values
+they already reported:
+
+- `I_B − M_B` is the **A×B** interaction of the item-3.2 section — one instruction per
+  `IdentifierNode` evaluation, on four programs whose identifier counts span 14.0 to 21.0
+  million, each fitting to within two counts.
+- `I_C − M_C` is the **C×(A+B)** interaction of the item-3.3 section, with its sign flipped
+  because that section reports it in the other orientation (cumulative marginal minus
+  isolated). C removes *more* work once A and B are applied — exactly one instruction per
+  `<` evaluation more — so it pushes the residual **down**.
+- `I_D − M_D` is the **D×(A+B+C)** interaction of the item-3.4 section, mixed in sign, with
+  `fib32`'s +56,393,243 at 8.00 instructions per call.
+
+So the residual is not a new quantity needing a new explanation. It is the sum of three
+interactions whose mechanisms were each read out of the binaries at the item that measured
+them, and it needed no measurement of its own to state.
+
+#### The mechanism is code generation, and the branch column proves the negative
+
+**`branches` has a residual of exactly zero on all four programs.** The isolated sum and
+the cumulative total are not merely close; they are the same integer:
+
+| | `arith` | `fib32` | `loop10m` | `vars` |
+|---|---|---|---|---|
+| `branches` isolated sum | 2,314,000,015 | 1,518,829,259 | 2,270,000,152 | 2,972,003,481 |
+| `branches` cumulative | 2,314,000,015 | 1,518,829,259 | 2,270,000,152 | 2,972,003,481 |
+| **residual** | **0** | **0** | **0** | **0** |
+
+That is the three-consecutive-zero pattern of the pairwise checks composing into a total.
+The four ablations remove **disjoint branch traffic**, and the branch column decomposes
+additively across the whole series. Whatever the `Ir` residual is, it is not control flow:
+no branch is removed twice.
+
+What is left is code generation. Each of the three non-zero terms above is visible in
+**instructions retired**, and two of them are exactly one instruction per a node the
+ablation in question never touched — A and B do not touch the identifier arm; C's `<` arm
+differs between the two trees only by a `mov x2, #1` the compiler re-materialises in one
+and hoists in the other. `Interpreter::evaluate` is a materially different function in each
+configuration (`0xfd4` bytes in N, `0xc44` in A, `0xd70` in B, `0x938` in A+B, read with
+`nm -S`). Removing one arm's work changes what the compiler emits for the arms beside it,
+and the sign of that change is not fixed: **two of D's four terms are negative.**
+
+#### The memory-stall overlap this roadmap predicted is not what the columns show
+
+The roadmap's 5.2 text asks for the mechanism to be grounded in the cache-miss and IPC
+columns. Two things stand in the way of taking that instruction literally, and both are
+stated rather than worked around.
+
+**There is no IPC column to ground anything in.** `perf_cycles`, `perf_instructions` and
+`perf_ipc` are empty in all 68 rows — `perf` does not work on this platform (packaged tools
+built for kernel 6.8; Docker Desktop runs LinuxKit 6.12.68), so the code that would fill
+them has never executed. No IPC is estimated or derived here. A stall argument is a claim
+about *cycles*, and this repository has never measured a cycle.
+
+**The cache columns are flat while the instruction counts fall hard**, which is the
+evidence the item's own text says to point at, and it points away from overlap rather than
+towards it. `LL_misses` — the misses that actually cost hundreds of cycles — never leave a
+band of a few tens of counts anywhere in the series:
+
+| `LL_misses` | `arith` | `fib32` | `loop10m` | `vars` |
+|---|---|---|---|---|
+| N | 13,115 | 13,729 | 12,916 | 13,353 |
+| H | 13,060 | 13,494 | 12,868 | 13,275 |
+| range over all nine Phase 3 configurations | 13,060–13,115 | 13,494–13,731 | 12,868–12,916 | 13,275–13,353 |
+
+Thirteen thousand last-level misses in a program that retires between 12.8 and 16.0
+**billion** instructions is not a workload with stalls to overlap. `D1_misses` say the same
+on the two programs with no confounder: `arith` moves from 20,609 to 20,606 and stays
+inside 20,601–20,617 across all nine configurations, and `loop10m` from 20,285 to 20,272
+inside 20,272–20,285 — while `Ir` on those two programs falls 70.80% and 71.95%.
+
+Two rows in the `D1_misses` table are not flat, and neither is papered over. `bench/vars.algo`
+collapses from 3,021,434 to 21,427 **at ablation A** and stays there; `bench/fib32.algo`
+rises at D, to 17,636,152 isolated and 11,870,385 cumulative against N's 13,294,533. Both
+are explained in the item-3.4 section above — the first is A and D independently removing
+the same three million misses, the second a glibc size class — and neither is a stall
+overlap between ablations.
+
+**So this item reports code generation as the source of the residual, and reports the
+memory-stall overlap as predicted but not observed.** The two are not symmetric claims: the
+code-generation component is *measured*, in a column where nothing can hide behind a stall,
+and it accounts for the residual to the count on all four programs. The overlap component
+would have to live in cycles, which are not measured here, and the miss counts that would
+have to be large for it to matter are four to six orders of magnitude smaller than the
+instruction counts. This is a deviation from the roadmap's stated expectation and is
+recorded as one.
+
+#### One column that does not decompose, stated so it is not assumed
+
+`branches` decomposes additively and `Ir` decomposes to within 0.9%. **`mispredicts` does
+neither**, and its residual is mixed in sign — `arith` −34,000,012, `fib32` +32,206,302,
+`loop10m` +49,999,998, `vars` −5,000,215. Ablation C alone *raises* mispredictions above N
+(`perf/iso-c` on `arith` is 130,015,326 against N's 108,015,316), which is the same enum
+`switch` decision tree the item-3.3 section priced in the branch column. Nothing here rests
+on that column; it is written down so that a later item does not read the branch column's
+additivity as a property of the branch predictor.
