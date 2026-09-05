@@ -1,13 +1,134 @@
-# Algo Compiler
+# Algo
 
 [![CI](https://github.com/taneesha-beep/algo-vm/actions/workflows/ci.yml/badge.svg)](https://github.com/taneesha-beep/algo-vm/actions/workflows/ci.yml)
 
-A compiler for a simple algorithmic language, built from scratch in C++20. Takes a `.algo` source file through four stages: lexical analysis, parsing, resolution, and interpretation.
+**A small language with a C++20 front end and two execution engines — a tree-walk
+interpreter and a bytecode virtual machine — built so that what the second one is worth can
+be measured rather than asserted.**
 
-*This repository began as a four-person college coursework project. That inherited state is
-tagged [`v0-coursework`](https://github.com/taneesha-beep/algo-vm/releases/tag/v0-coursework);
+*This repository began as four-person college coursework. That inherited state is tagged
+[`v0-coursework`](https://github.com/taneesha-beep/algo-vm/releases/tag/v0-coursework);
 everything since — [`v0-coursework...main`](https://github.com/taneesha-beep/algo-vm/compare/v0-coursework...main)
-— is solo work. The `master` branch is preserved as the frozen team artifact.*
+— is solo work. The `master` branch is an earlier and thinner snapshot of the same
+coursework era, kept frozen; the tag, not that branch, is the fuller team artifact.*
+
+---
+
+## The measured result
+
+Three configurations of the same language, all measured under `valgrind --tool=cachegrind`
+in a digest-pinned Linux container. Every figure here traces to a row in
+[`results/measurements.csv`](results/measurements.csv).
+
+| | |
+|---|---|
+| **N** | the naive tree-walk interpreter, at tag `v1-naive-treewalk` |
+| **H** | the same tree-walker with four unforced inefficiencies removed |
+| **V** | the bytecode compiler and virtual machine, reached by `algo --engine=vm` |
+
+Instructions retired, per benchmark program:
+
+| Program | What it loads | N → H | H → V | N → V |
+|---|---|---:|---:|---:|
+| `bench/arith.algo` | expression-tree traversal | −70.80% | +90.29% | −44.44% |
+| `bench/fib32.algo` | call and frame overhead | −47.29% | −36.61% | −66.59% |
+| `bench/loop10m.algo` | dispatch | −71.95% | +54.82% | −56.57% |
+| `bench/vars.algo` | variable access | −83.28% | +87.92% | −68.57% |
+
+The four ablations behind the N → H column are: passing the evaluated node by reference
+rather than by value; converting integer literals once at parse time instead of re-parsing
+their digits at every evaluation; dispatching operators on an enum rather than on a chain of
+string comparisons; and indexing each frame by slot rather than looking names up in a
+`std::map<std::string, Value>`. Each is a commit and a tag of its own, measured both in
+isolation against N and cumulatively along `main`, and each carries a per-visit cost model
+checked across all four programs. The workings are in
+[`results/README.md`](results/README.md).
+
+---
+
+## A diagnostic
+
+Errors go to **stderr**, carrying the path, line and column they came from, the source line
+echoed, and a caret under the offending span. Arithmetic **traps rather than wrapping**, so
+an overflow is a diagnostic and not a wrong answer:
+
+```
+$ ./build/algo error_int_overflow.algo
+error_int_overflow.algo:2:7: error: integer overflow in '+'
+print total + 1
+      ^~~~~~~~~
+```
+
+Exit code 70 — a runtime fault, because whether `total + 1` overflows depends on what the
+program computed. An out-of-range *literal* is exit 65 instead, settled by the source text
+alone. Both engines render this identically, and every case in `tests/` is checked against
+both. The full table is under [Error handling](#error-handling).
+
+---
+
+## The bytecode
+
+`--dump` compiles a program and prints its chunk to stdout instead of running it:
+
+```bash
+./build/algo --dump tests/while_sum.algo
+```
+
+```
+i = 1
+total = 0
+while i <= 100 {
+    total = total + i
+    i = i + 1
+}
+print total
+```
+
+```
+== chunk ==
+  code: 51 bytes  constants: 4  functions: 0  program frame: 2 slots
+
+== constants ==
+  #0  1
+  #1  0
+  #2  100
+  #3  1
+
+== functions ==
+  (none)
+
+== code ==
+  0000  line   1  CONST             0  ; 1
+  0003  line   1  STORE_LOCAL       0
+  0006  line   2  CONST             1  ; 0
+  0009  line   2  STORE_LOCAL       1
+  0012  line   3  LOAD_LOCAL        0
+  0015  line   3  CONST             2  ; 100
+  0018  line   3  GT
+  0019  line   3  NOT
+  0020  line   3  JUMP_IF_FALSE    46  ; -> 0046
+  0023  line   4  LOAD_LOCAL        1
+  0026  line   4  LOAD_LOCAL        0
+  0029  line   4  ADD
+  0030  line   4  STORE_LOCAL       1
+  0033  line   5  LOAD_LOCAL        0
+  0036  line   5  CONST             3  ; 1
+  0039  line   5  ADD
+  0040  line   5  STORE_LOCAL       0
+  0043  line   3  JUMP             12  ; -> 0012  (backward)
+  0046  line   7  LOAD_LOCAL        1
+  0049  line   7  PRINT
+  0050  line   7  HALT
+```
+
+Two things that listing shows. `<=` has **no opcode of its own** — it lowers onto `GT NOT`,
+which is part of why nineteen opcodes are enough, and it costs one extra instruction every
+time it runs. And a jump operand is an **absolute target**, not a signed displacement, so
+the one `JUMP` at `0043` serves the backward branch to a `while` header exactly as it serves
+the forward exit from an `if`. The format is documented in
+[`docs/BYTECODE.md`](docs/BYTECODE.md).
+
+Setup and build instructions are [below](#build--run).
 
 ---
 
@@ -22,7 +143,7 @@ z = y - 4
 print z
 ```
 
-And runs it through four stages. Standard output carries what the program printed, and nothing else:
+And runs it through the front end and then through whichever engine was asked for. Standard output carries what the program printed, and nothing else:
 
 ```
 12
@@ -116,12 +237,21 @@ Walks the AST before execution carrying a stack of **frames**, one per function 
 
 A frame is a boundary, not just a counter. Lookup searches the current frame and stops, so a function body sees its parameters and its own locals and nothing else — not a top-level variable, not another function's local. That falls out of what a slot *is*: an index numbered from zero within one frame, which cannot also name a position in another. Everything a function needs, it is passed.
 
-Nothing reads those slots yet, deliberately. The interpreter goes on looking each name up by string in a `std::map`, and replacing that map with an array indexed by slot is a later, separately measured change — so the resolver's output waits for the commit that spends it.
+Both back ends address variables by those slots. The tree-walk interpreter indexes a frame vector with them; the bytecode compiler writes them straight into `LOAD_LOCAL` and `STORE_LOCAL` operands. Replacing the original `std::map<std::string, Value>` environment with an array indexed by slot was a change measured on its own before it was kept — it is the fourth ablation in the table above.
 
-**Stage 4 — Tree-Walk Interpreter**
-Recursively evaluates the AST. Maintains one `std::map` as the variable environment **per call**, on a stack of them — recursion needs two live copies of a parameter at once, and one flat map has room for one. Executes `print` statements by evaluating the expression subtree and writing to stdout. Values are a tagged union of a 64-bit integer and a boolean — there is no implicit conversion between them, so an integer is not truthy and a boolean is not 0 or 1.
+**Stage 4a — Tree-Walk Interpreter** (`--engine=tree`, the default)
+Recursively evaluates the AST. Maintains one **frame per call**, on a stack of them — recursion needs two live copies of a parameter at once, and one flat environment has room for one. A frame is a `std::vector<Value>` indexed by the slot the resolver assigned, sized from the count that function declared. Executes `print` statements by evaluating the expression subtree and writing to stdout. Values are a tagged union of a 64-bit integer and a boolean — there is no implicit conversion between them, so an integer is not truthy and a boolean is not 0 or 1.
 
 A `return` unwinds as a flag reported up the statement walk rather than as an exception: `fib(27)` returns several hundred thousand times, and an exception per return would cost more than everything this project later sets out to optimise away. Recursion is bounded by a **call-depth limit** of 1000, which raises a diagnostic where the C++ stack would otherwise overflow and kill the process on a signal.
+
+**Stage 4b — Bytecode Compiler and Virtual Machine** (`--engine=vm`)
+A second back end over the same resolved AST. `src/compiler.cpp` lowers it to a **chunk** — a flat byte array of nineteen opcodes, a constant pool, a function table, and a span table — doing no name resolution and no type checking of its own, because Stage 3 has already done both. Forward jumps are emitted with a placeholder operand and backpatched once the target offset is known.
+
+`src/vm.cpp` runs that chunk on an operand stack and a frame stack of `{returnIP, slotBase}`. Locals live *on* the operand stack, so slot `s` is `stack[slotBase + s]` and a call is a slot range on memory the VM already owns rather than a heap allocation. Faults are raised from the span table, which stores each instruction's source span **and the operator's spelling** — a span alone cannot say which operator a lowered `NOT` came from.
+
+The fault messages in the VM are **duplicated from the tree-walker rather than shared**. Extracting them into a common header would make the two engines agree by construction, and agreeing by construction is not something the test suite could check. Keeping them apart is what makes the differential testing below a test.
+
+`--dump` prints a chunk instead of running it; it does not execute, and is orthogonal to `--engine`.
 
 ---
 
@@ -297,7 +427,7 @@ The span comes from the stage that raised the error; the path and source text co
 
 Exit codes are sysexits-style: `0` success, `64` bad command line, `65` compile-time error, `66` unreadable input file, `70` runtime fault.
 
-A literal too wide for the value type is classed **compile-time**, not runtime, even though it is currently detected during evaluation — it is a property of the token's text, not of anything the program computes. A type mismatch is classed the opposite way for the same reason read in reverse: with no type checker in the language, whether an operand has the right type depends on what the program computed, so it is a runtime fault.
+A literal too wide for the value type is classed **compile-time**: it is a property of the token's text, not of anything the program computes. It is detected at parse time, with the conversion, so it fires on every literal in the file — including one inside a function that is never called. A type mismatch is classed the opposite way for the same reason read in reverse: with no type checker in the language, whether an operand has the right type depends on what the program computed, so it is a runtime fault.
 
 The two call errors fall on the same line for the same reason. An argument count is settled by the source text alone — the call site says how many, the declaration says how many — so a wrong arity is a **compile-time** error. How deep a chain of calls actually gets depends on what the program computed, so an exhausted call depth is a **runtime** fault. That limit exists because unbounded recursion would otherwise exhaust the C++ stack and kill the process on a signal, with no diagnostic and no exit code at all.
 
@@ -305,7 +435,9 @@ The two call errors fall on the same line for the same reason. An argument count
 
 ## Testing & CI
 
-The suite is thirty-two CTest cases: twenty-eight golden-file cases and four unit tests.
+The suite is **sixty-six CTest cases**. Twenty-nine golden-file cases are each registered **twice**, once per engine, plus eight unit tests that link the core library.
+
+**Every golden-file case runs under both engines on every push**, as `<case>_tree` and `<case>_vm`. That is what turns *the VM preserves the language's semantics* from an assertion into something CI re-checks under both GCC and Clang: the two engines must print the same bytes on stdout, render the same diagnostic on stderr, and exit with the same code — not merely compute the same answers. `ctest -R _vm` selects one engine, `ctest -R _tree` the other. The failure mode to watch for is not a red test but a **vacuous pass**: register the second set, forget to pass the engine down, and twenty-nine green tests run the tree-walker twice while looking perfect. The only thing that disproves it is a deliberate mutation of `src/vm.cpp` that requires *both* halves — the `_vm` cases go red **and** the `_tree` cases stay green.
 
 Golden-file cases live in `tests/`, each a `.algo` input paired with the output it should produce:
 
@@ -328,7 +460,10 @@ Golden-file cases live in `tests/`, each a `.algo` input paired with the output 
 | `return_early`           | A bare `return`, an early exit from a loop, and a body that runs off its end |
 | `deep_recursion`         | A chain exactly as deep as the call-depth limit allows |
 | `error_div_zero`         | Runtime error: division by zero                  |
-| `error_overflow`         | Runtime error: integer literal overflow          |
+| `error_overflow`         | Compile error: an integer literal too wide for the value type |
+| `error_overflow_unreached` | The same, inside a function that is never called — literals are checked at parse time |
+| `error_int_overflow`     | Runtime error: arithmetic overflow in `+`        |
+| `int64_range`            | The signed 64-bit range, and the edges at which each of the five sites traps |
 | `error_undef`            | Resolution error: a name never assigned anywhere |
 | `error_out_of_scope`     | Resolution error: a name used after its block ended |
 | `error_while_local`      | Resolution error: a name local to a loop body    |
@@ -346,9 +481,9 @@ The **call-depth limit** is the one guard that had to go inside the language ins
 
 A case compares up to three things. `<case>.expected` is stdout and is required. `<case>.expected_err` is stderr and `<case>.expected_code` is the process exit code; both are optional, and an absent file means *do not check* rather than *expect empty* — so a case that does not care what it exits with simply omits the file.
 
-`CMakeLists.txt` globs every `tests/*.algo` file and registers it as a CTest test via `enable_testing()` / `add_test`, so new cases are picked up automatically — just add a matching `.algo` / `.expected` pair.
+`CMakeLists.txt` globs every `tests/*.algo` file and registers it twice via `enable_testing()` / `add_test`, so new cases are picked up automatically — a matching `.algo` / `.expected` pair arrives as two tests, not one. **No `.expected` file was regenerated when the second engine was added, and none should be**: the existing golden files are the *shared* expectation both engines are held to, which is what makes this a differential test rather than two independent suites.
 
-`tests/run_case.cmake` runs the interpreter **from `tests/` with a bare filename**, not with an absolute path. A diagnostic prints the path it was given verbatim, so an absolute one would write the checkout's own location into a golden file and fail on any other machine.
+`tests/run_case.cmake` runs the interpreter **from `tests/` with a bare filename**, not with an absolute path. A diagnostic prints the path it was given verbatim, so an absolute one would write the checkout's own location into a golden file and fail on any other machine. Its engine argument is optional, and the tree side passes **no flag at all** — that is byte for byte the invocation every golden file was recorded under.
 
 Golden-file cases compare streams, so they cannot assert a value that never reaches one. Unit tests cover those. The sources minus `main.cpp` build as an `algo_core` library, and a unit test is a plain binary that links it with its own `main()` — a failed check writes to stderr and the process exits non-zero, which is all CTest reads. There is no third-party test framework, and the project has no external dependencies. Unit tests are registered one explicit target each, since a glob over compiled sources would not re-run when a file is added.
 
@@ -358,6 +493,10 @@ Golden-file cases compare streams, so they cannot assert a value that never reac
 | `tests/diagnostic_test.cpp` | The rendered form of a diagnostic — caret geometry, tab alignment, and which error class each site raises |
 | `tests/expression_test.cpp` | The value type, and the precedence facts no printed output can show |
 | `tests/resolver_test.cpp`   | Scoping, the slot on every variable, the frame each function is numbered into, and the errors the resolver reports |
+| `tests/chunk_test.cpp`      | The bytecode format — every opcode's operand encoding and instruction width, written out a second time by hand so the two have to be wrong in the same way to agree |
+| `tests/compiler_test.cpp`   | Three chunks written out by hand, and structural invariants over the chunk of every `.algo` file in `tests/`, `examples/` and `bench/` |
+| `tests/vm_test.cpp`         | What differential testing cannot reach — the `POP` arm nothing emits, the operand-stack guard no program can trigger, the unknown-opcode arm, and the span a fault reports |
+| `tests/disassembler_test.cpp` | That every byte prints, including a corrupt one, and that the line column requires an exact span-table hit rather than borrowing the previous instruction's |
 
 The last two exist because some claims cannot reach a stream. `-2 * 3` and `-(2 * 3)` agree on the answer — negation distributes through multiplication — so only an assertion on the tree can say which one the parser built. The same goes for the value type, which is an in-memory representation the interpreter never shows.
 
@@ -447,6 +586,7 @@ Two decisions behind those numbers are recorded in [`docs/MEASUREMENT.md`](docs/
 ## Tech Stack
 
 - **Language:** C++20
+- **Engines:** a tree-walk interpreter and a bytecode VM over one shared front end
 - **Build System:** CMake 3.20+
 - **Compiler:** AppleClang (macOS) / GCC or Clang (Linux)
 - **Measurement:** valgrind/cachegrind, inside a digest-pinned Ubuntu container
@@ -478,7 +618,19 @@ make
 ./build/algo examples/program.algo
 ```
 
-Add `--trace` to see the stages narrate themselves on stderr:
+Select the back end with `--engine`. It defaults to `tree`; an unrecognised value is exit 64:
+
+```bash
+./build/algo --engine=vm examples/program.algo
+```
+
+`--dump` prints the compiled chunk to stdout and does **not** run the program, so it is orthogonal to `--engine`:
+
+```bash
+./build/algo --dump tests/while_sum.algo
+```
+
+Add `--trace` to see the stages narrate themselves on stderr, which leaves stdout carrying the program's own output either way:
 
 ```bash
 ./build/algo --trace examples/program.algo
@@ -512,16 +664,17 @@ algo/
 │   ├── bench.sh                         # The measurement driver — one binary, one program, one row
 │   └── bench-ablations.sh               # The configuration builder — a list of refs, one worktree each
 ├── results/
-│   ├── README.md                        # Schema, and which columns may be committed as thresholds
+│   ├── README.md                        # Schema, the ablation workings, and the attribution table
 │   └── measurements.csv                 # The ledger — every committed number traces to a row here
 ├── docs/
 │   ├── GRAMMAR.md                       # Language reference — integer range and overflow rules
-│   └── MEASUREMENT.md                   # Image digest, CPU, compiler, and why -O2 and native arm64
+│   ├── BYTECODE.md                      # Opcode reference — operand encoding and stack effect
+│   └── MEASUREMENT.md                   # Image digest, CPU, compiler, and the boundary of the claim
 ├── examples/
 │   ├── program.algo                     # Sample program
 │   └── fib.algo                         # fib(27) — Phase 1's acceptance criterion
 ├── src/
-│   ├── main.cpp                         # Driver — argument handling, --trace, and the catch site
+│   ├── main.cpp                         # Driver — --engine, --dump, --trace, and the catch site
 │   ├── token.h                          # Token and source-span definitions
 │   ├── diagnostic.h / diagnostic.cpp    # Diagnostic type, renderer, error classes, exit codes
 │   ├── lexer.h / lexer.cpp              # Stage 1: source text → token stream
@@ -529,9 +682,13 @@ algo/
 │   ├── value.h                          # The runtime value type: a tagged 64-bit integer or boolean
 │   ├── parser.h / parser.cpp            # Stage 2: token stream → AST
 │   ├── resolver.h / resolver.cpp        # Stage 3: frames, scopes, calls, and a slot per variable
-│   └── interpreter.h / interpreter.cpp  # Stage 4: tree-walk evaluation
+│   ├── interpreter.h / interpreter.cpp  # Stage 4a: tree-walk evaluation
+│   ├── chunk.h                          # The bytecode format — opcodes, constants, span table
+│   ├── compiler.h / compiler.cpp        # Stage 4b: resolved AST → chunk
+│   ├── vm.h / vm.cpp                    # Stage 4b: the chunk's execution engine
+│   └── disassembler.h / disassembler.cpp # `--dump` — prints a chunk, never throws, never skips a byte
 └── tests/
-    ├── *.algo                           # Golden-file case inputs
+    ├── *.algo                           # Golden-file case inputs — each registered under both engines
     ├── *.expected                       # Expected stdout (required)
     ├── *.expected_err                   # Expected stderr (optional)
     ├── *.expected_code                  # Expected exit code (optional)
@@ -539,5 +696,9 @@ algo/
     ├── diagnostic_test.cpp              # Unit test: diagnostic rendering and error classification
     ├── expression_test.cpp              # Unit test: the value type and the precedence cascade
     ├── resolver_test.cpp                # Unit test: frames, scoping, and the slot on every variable
+    ├── chunk_test.cpp                   # Unit test: opcode widths and operand encoding
+    ├── compiler_test.cpp                # Unit test: hand-written chunks, and invariants over every program
+    ├── vm_test.cpp                      # Unit test: the arms differential testing cannot reach
+    ├── disassembler_test.cpp            # Unit test: listing geometry, and that every byte prints
     └── run_case.cmake                   # CTest driver script that runs a case and compares it
 ```
