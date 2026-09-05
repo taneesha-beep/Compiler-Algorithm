@@ -502,6 +502,60 @@ contract.
 
 ---
 
+## What item 4.5 settled
+
+Item 4.5 added `src/disassembler.{h,cpp}` and the `--dump` flag. It reads this
+file and adds nothing to the format: no opcode, no encoding, no table. Five
+decisions it took that the format left open, recorded here so that a later
+session reading a disassembly does not re-derive them.
+
+**`--dump` goes to STDOUT, where `--trace` goes to stderr, and the two are not
+inconsistent.** `--trace` narrates a run that is happening anyway, so it has to
+stay off the stream the program is writing to — `CLAUDE.md`'s *Output
+discipline*. `--dump` replaces the run: nothing executes, so there is no
+program output to keep clear of, the disassembly is the thing the tool was
+asked to produce, and `algo --dump f.algo > excerpt.txt` is how an excerpt is
+captured. Checked with two files rather than a pipe; stderr is empty.
+
+**`--dump` does not run the program, and is orthogonal to `--engine`.** A chunk
+is not an engine's property — it is what `--engine=vm` would have executed — so
+`--engine` is accepted alongside and has nothing to select between. `--dump`
+takes no value, so `--dump=vm` falls into the unknown-option arm and exits 64,
+which is `--engine`'s convention.
+
+**Every byte prints. The walk never throws and never skips.** `POP` prints like
+any other opcode — it is in `opCodeName`, and that is the whole reason the
+section above keeps it. A byte outside the nineteen prints as
+`<unknown opcode 0x7f>` and advances one byte, a byte that is no opcode having
+no length. An operand-bearing opcode with fewer than two bytes behind it prints
+as `<truncated: CONST needs 3 bytes, 1 available>` and ends the walk. Neither
+can occur in a chunk item 4.2 wrote; a debugging tool that dies on the corrupt
+input you reached for it to inspect is the wrong tool.
+
+**The line column comes from an EXACT span-table hit, not from `spanAt`'s
+answer.** `spanAt` returns the greatest entry at or before an offset, which is
+right for a fault and wrong here: a byte with no entry of its own would
+silently borrow the previous instruction's line. The disassembler prints the
+line only when `entry->offset == offset`, and a dash otherwise.
+
+**The operand is read through `Chunk::readOperand`, a byte at a time**, the
+same little-endian decode `emitOperand` writes — so the disassembly is the same
+on any host, which is what the encoding note above exists for. A jump's operand
+is printed unchanged, being already the absolute target; the one thing derived
+from it is the `(backward)` marker, which is what makes a `while` legible as a
+loop.
+
+`tests/disassembler_test.cpp` is the eighth unit binary. Two chunks built by
+hand and, beside each, the disassembly written out by hand — every offset,
+mnemonic, operand, annotation and column — so the expectation is stated a
+second time and independently. The second chunk is the one nothing else can
+reach: `POP`, a byte that is no opcode, and a truncated instruction. Five
+mutants under the binary-hash guard, hashing `build/disassembler_test` because
+that is what links the code under test; all five detected, and `chunk_test`
+stayed green under each, so it is the new test doing the catching.
+
+---
+
 ## What the rest of Phase 4 owes this file
 
 * ~~**4.2**~~ — **done, 2026-09-04.** Sets `SpanEntry::span` per the rule above
@@ -527,6 +581,14 @@ contract.
   span-table rules above — the operator spelling on both halves of a lowered
   pair, `JUMP_IF_FALSE` carrying the condition's span — are now pinned by the
   five faulting cases running under the VM, not only by `tests/vm_test.cpp`.
-* **4.5** — reads `opCodeName`, `opCodeHasOperand`, the constant pool and the
-  function table; a jump operand is already the absolute target, so there is
-  nothing to compute.
+* ~~**4.5**~~ — **done, 2026-09-05.** Reads `opCodeName`, `opCodeHasOperand`,
+  `instructionLength`, the constant pool, the function table and the span
+  table; prints a jump's operand unchanged, the absolute target needing no
+  arithmetic. Adds nothing to the format. See the section above for the five
+  decisions it took on top of it — the stream, the orthogonality to `--engine`,
+  what it does with `POP` and with a byte that is no opcode, the exact
+  span-table hit, and the byte-at-a-time operand read.
+
+**THIS LIST IS NOW CLOSED.** 4.1 wrote this file; 4.2, 4.3, 4.4 and 4.5 have
+each struck their bullet through. Phase 4 owes this file nothing further, and
+item 6.3's job on it is to confirm and cross-link, not to write.
