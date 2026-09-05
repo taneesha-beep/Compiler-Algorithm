@@ -1,10 +1,200 @@
 # Algo — language reference
 
-> **Scope of this file.** Roadmap item 1.5 requires the **overflow semantics**
-> to be written down, so that is what is here. The EBNF and the precedence
-> table belong to the same file and are item **6.3**'s to add; this file was
-> created early rather than duplicating the rules into the README and moving
-> them later.
+> **Scope of this file.** The whole of the language: its **grammar**, its
+> **precedence and associativity**, and its **integer and overflow semantics**.
+> Item 1.5 wrote the overflow third; item 6.3 added the grammar and the
+> precedence table. The instruction set the second back end compiles this
+> language to is [`docs/BYTECODE.md`](BYTECODE.md); how the two back ends are
+> measured, and what those measurements do not establish, is
+> [`docs/MEASUREMENT.md`](MEASUREMENT.md).
+>
+> **Every listing on this page was run and its output copied from the result.**
+> None is hand-written from the source or from this file's own rules, and all of
+> them were re-run under both engines — `algo <file>` and `algo --engine=vm
+> <file>` — after the virtual machine arrived.
+
+## The grammar
+
+Notation is EBNF: `{ x }` is zero or more, `[ x ]` is optional, `|` is
+alternation, and a quoted run is a terminal.
+
+```ebnf
+program          = { function | statement } ;
+
+function         = "fn" identifier "(" [ parameter-list ] ")" block ;
+parameter-list   = identifier { "," identifier } ;
+
+block            = "{" { statement } "}" ;
+
+statement        = print-statement
+                 | if-statement
+                 | while-statement
+                 | return-statement
+                 | block
+                 | assignment ;
+
+print-statement  = "print" expression ;
+if-statement     = "if" expression block [ "else" ( if-statement | block ) ] ;
+while-statement  = "while" expression block ;
+return-statement = "return" [ expression ] ;
+assignment       = identifier "=" expression ;
+
+expression       = equality ;
+equality         = comparison { ( "==" | "!=" ) comparison } ;
+comparison       = term { ( "<" | "<=" | ">" | ">=" ) term } ;
+term             = factor { ( "+" | "-" ) factor } ;
+factor           = unary { ( "*" | "/" ) unary } ;
+unary            = ( "-" | "!" ) unary
+                 | primary ;
+primary          = number
+                 | boolean
+                 | identifier [ "(" [ argument-list ] ")" ] ;
+argument-list    = expression { "," expression } ;
+
+number           = digit { digit } ;
+boolean          = "true" | "false" ;
+identifier       = letter { letter | digit } ;
+
+letter           = "A" … "Z" | "a" … "z" ;
+digit            = "0" … "9" ;
+```
+
+That is the whole language. A program that uses only these rules:
+
+```
+i = 1
+total = 0
+while i <= 100 {
+    total = total + i
+    i = i + 1
+}
+print total
+```
+
+```
+5050
+```
+
+### Seven things the rules above say that are easy to read past
+
+**A function may only be declared at the top level.** `function` appears in
+`program` and in no other rule — not in `block`, so not inside an `if`, a
+`while`, or another function. The parser says so in as many words rather than
+reporting a statement that cannot begin with `fn`.
+
+**A call is not a rule of its own.** `primary` consumes an identifier and then
+looks at one further token: a `(` makes it a call, anything else makes it a
+variable read. There is no call whose callee is an expression, because such an
+expression would have to evaluate to a function and functions are not values in
+this language.
+
+**`(` is legal in exactly one position — immediately after an identifier**,
+where it opens a call's argument list or, after `fn`, a parameter list. There
+are **no grouping parentheses**:
+
+```
+a = 1
+b = 2
+c = 3
+print a * (b + c)
+```
+
+```
+grouping.algo:4:11: error: expected an expression, found '('
+print a * (b + c)
+          ^
+```
+
+An expression is built out of precedence and left associativity instead:
+`i * 6 / 3` is `(i * 6) / 3`. This is a property of the language rather than an
+omission — adding grouping would be a new language feature, which the roadmap
+forbids, and a program that seems to need one is a program to rewrite.
+
+**A condition takes no parentheses, and adding them is the same error.** `if`
+and `while` are followed by an expression and then a block, so the C habit is a
+compile error at the `(`:
+
+```
+x = 1
+while (x) {
+  x = 0
+}
+```
+
+```
+cond.algo:2:7: error: expected an expression, found '('
+while (x) {
+      ^
+```
+
+**There is no statement separator.** No semicolons, and a newline is nothing but
+whitespace. A statement ends where the next one begins, which the grammar
+already says by writing `block` as `"{" { statement } "}"` with nothing between
+the repetitions.
+
+**There is no comment syntax.** `#` is an unknown character and `//` lexes as
+two divides, so a `.algo` file cannot document itself. Explanation lives in the
+commit message or in `docs/`.
+
+**An identifier is letters and digits, and must start with a letter.** No
+underscore, no leading digit, no other character. The eight reserved words —
+`print`, `if`, `else`, `while`, `fn`, `return`, `true`, `false` — are not
+available as names: the lexer consumes a whole alphanumeric run before
+classifying it, so `printer` and `trueValue` are ordinary identifiers while
+`print` never is.
+
+### What the grammar does not decide
+
+Parsing accepts programs the compiler still rejects, and every one of these is
+a **compile-time error, exit 65**, decided in `src/resolver.cpp` after the tree
+is built: a name read where nothing has assigned it, a name used outside the
+block that assigns it, a call to an unknown function, a call whose argument
+count does not match the declaration, a function name used as a value, a
+variable used as a function, a duplicate parameter or function name, and
+`return` outside a function body. They are *not* grammar rules, and writing
+them into the EBNF would be writing a different grammar.
+
+The language has **no type checker**, so a type mismatch is not caught here
+either — it is a runtime fault, exit 70, which is the same classification the
+overflow traps below get and for the same reason.
+
+## Precedence and associativity
+
+Six levels, loosest first. Each level in the EBNF above parses the one below it
+and then loops, which is what makes the five binary levels **left-associative**;
+`unary` recurses into itself instead, which is what makes prefix operators
+right-associative and stackable.
+
+| Level | Operators | Associativity |
+|---|---|---|
+| equality | `==` `!=` | left |
+| comparison | `<` `<=` `>` `>=` | left |
+| term | `+` `-` | left |
+| factor | `*` `/` | left |
+| unary | `-` `!` (prefix) | right |
+| primary | literals, variables, calls | — |
+
+Consequences worth stating, because with no grouping parentheses the table is
+the only way to read a program:
+
+* `a - b - c` is `(a - b) - c`, not `a - (b - c)`.
+* `i * 6 / 3` is `(i * 6) / 3` — `*` and `/` share a level and go left to right.
+* `- -5` is `5`, and `!!true` is `true`. There is no decrement operator, so
+  `--5` has only the one reading.
+* `-2 * 3` is `(-2) * 3`. Unary binds tighter than `*`, as in C. The binding is
+  not observable in the answer — negation distributes through multiplication and
+  division — so it is the shape of the tree that records it, and
+  `tests/expression_test.cpp` is what checks it.
+* `a < b == c < d` is `(a < b) == (c < d)`, since equality is looser than
+  comparison. Both operands are booleans, and `==` accepts them.
+* There is no `&&` and no `||`, so there is no short-circuit level and nothing
+  below equality.
+
+**The second back end preserves every line of this table.** Three of the six
+comparison operators have no opcode of their own — `<=`, `>=` and `!=` are
+lowered onto `GT NOT`, `LT NOT` and `EQ NOT` — which changes what the virtual
+machine executes and not what the language means. The lowering, and what it
+costs, are in [`docs/BYTECODE.md`](BYTECODE.md).
 
 ## Integers
 
@@ -110,6 +300,13 @@ print least / -1
 
 Unary minus is worded apart from the binary operator, because `-` names two of
 them and a reader needs to know which one trapped: `integer overflow in unary '-'`.
+
+**Both engines trap identically** — message, caret and exit code. `ADD`, `SUB`,
+`MUL`, `DIV` and `NEG` are trapping opcodes in the instruction set for exactly
+this reason, and [`docs/BYTECODE.md`](BYTECODE.md) fixes each fault's wording
+there rather than leaving the second back end to invent its own. The three
+listings above were re-run under `--engine=vm` and reproduced byte for byte on
+stdout, on stderr and in the exit code.
 
 ## Why it traps rather than wrapping
 

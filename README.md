@@ -705,7 +705,7 @@ algo/
 │   ├── README.md                        # Schema, the ablation workings, and the attribution table
 │   └── measurements.csv                 # The ledger — every committed number traces to a row here
 ├── docs/
-│   ├── GRAMMAR.md                       # Language reference — integer range and overflow rules
+│   ├── GRAMMAR.md                       # Language reference — grammar, precedence and overflow rules
 │   ├── BYTECODE.md                      # Opcode reference — operand encoding and stack effect
 │   └── MEASUREMENT.md                   # Image digest, CPU, compiler, and the boundary of the claim
 ├── examples/

@@ -9,15 +9,19 @@
 > **Bytecode executes.** Item 4.2 is the compiler — **done, 2026-09-04**, in
 > [`src/compiler.{h,cpp}`](../src/compiler.h) — and item 4.3 is the virtual
 > machine that runs what it writes — **done, 2026-09-04**, in
-> [`src/vm.{h,cpp}`](../src/vm.h), reached by `algo --engine=vm`. 4.4 is the
-> differential test across the two engines, 4.5 the disassembler. This file describes the
+> [`src/vm.{h,cpp}`](../src/vm.h), reached by `algo --engine=vm`. Item 4.4 is
+> the differential test across the two engines — **done, 2026-09-04**, and it is
+> what holds both to the same golden files — and item 4.5 is the disassembler,
+> **done, 2026-09-05**, in [`src/disassembler.{h,cpp}`](../src/disassembler.h),
+> reached by `algo --dump <file>`. This file describes the
 > format those four are built on and nothing more; the format itself lives in
 > [`src/chunk.h`](../src/chunk.h). **What 4.2 settled on top of it is a section
 > of its own near the end**, and 4.3 and 4.5 should read it.
 >
 > **There is no performance claim on this page.** Item 4.1 runs no measurement,
 > and `CLAUDE.md` rule 2 forbids writing a number that was not produced by a
-> command. > Where a cost is real but unmeasured it is written `<pending>`. **Item 5.1 filled in
+> command. Where a cost is real but unmeasured it is written `<pending>`.
+> **Item 5.1 filled in
 > the lowered-comparison cost on 2026-09-05 — 57.00 instructions each; see below.** The
 > one remaining `<pending>` on this page, the cost of the operand encoding's extra byte,
 > is deliberate: no ablation prices it, so there is nothing to measure it against.
@@ -196,6 +200,10 @@ Getting this wrong moves a caret, which no golden case would catch until item
 ---
 
 ## The six comparison operators, and the four opcodes
+
+The six operators, their precedence and their associativity are the language's
+and not this format's: [`docs/GRAMMAR.md`](GRAMMAR.md) holds the grammar and the
+precedence table, and the lowering below preserves both exactly.
 
 Item 1.1 gave the language six comparison operators and `src/ast.h`'s
 `BinOpKind` has all six: `Less`, `LessEqual`, `Greater`, `GreaterEqual`,
