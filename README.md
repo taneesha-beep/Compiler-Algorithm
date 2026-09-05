@@ -16,6 +16,17 @@ coursework era, kept frozen; the tag, not that branch, is the fuller team artifa
 
 ## The measured result
 
+**Replacing the tree-walk interpreter with a bytecode virtual machine made three of the four
+benchmark programs retire *more* instructions, not fewer.** Against the **hardened**
+tree-walker — the same engine with four unforced inefficiencies removed — the VM costs
+**+90.29%** on `arith`, **+54.82%** on `loop10m` and **+87.92%** on `vars`. It returns
+**−36.61%** on `fib32`, the one program of the four that calls a function.
+
+Against the **naive** tree-walker instead, the same VM looks like a 44–69% win on every
+program. That second comparison is the one this project exists to refuse: it credits the
+bytecode back end with four inefficiencies a tree-walker never had to have in the first
+place. It is shown below, and it is not shown without the first beside it.
+
 Three configurations of the same language, all measured under `valgrind --tool=cachegrind`
 in a digest-pinned Linux container. Every figure here traces to a row in
 [`results/measurements.csv`](results/measurements.csv).
@@ -26,14 +37,15 @@ in a digest-pinned Linux container. Every figure here traces to a row in
 | **H** | the same tree-walker with four unforced inefficiencies removed |
 | **V** | the bytecode compiler and virtual machine, reached by `algo --engine=vm` |
 
-Instructions retired, per benchmark program:
+Instructions retired, per benchmark program. **H → V is the leading number**; N → V is the
+same step with everything the four ablations removed folded back into it:
 
-| Program | What it loads | N → H | H → V | N → V |
+| Program | What it loads | N → H | **H → V** | N → V *(includes the four ablations)* |
 |---|---|---:|---:|---:|
-| `bench/arith.algo` | expression-tree traversal | −70.80% | +90.29% | −44.44% |
-| `bench/fib32.algo` | call and frame overhead | −47.29% | −36.61% | −66.59% |
-| `bench/loop10m.algo` | dispatch | −71.95% | +54.82% | −56.57% |
-| `bench/vars.algo` | variable access | −83.28% | +87.92% | −68.57% |
+| `bench/arith.algo` | expression-tree traversal | −70.80% | **+90.29%** | −44.44% |
+| `bench/fib32.algo` | call and frame overhead | −47.29% | **−36.61%** | −66.59% |
+| `bench/loop10m.algo` | dispatch | −71.95% | **+54.82%** | −56.57% |
+| `bench/vars.algo` | variable access | −83.28% | **+87.92%** | −68.57% |
 
 The four ablations behind the N → H column are: passing the evaluated node by reference
 rather than by value; converting integer literals once at parse time instead of re-parsing
@@ -43,6 +55,32 @@ string comparisons; and indexing each frame by slot rather than looking names up
 isolation against N and cumulatively along `main`, and each carries a per-visit cost model
 checked across all four programs. The workings are in
 [`results/README.md`](results/README.md).
+
+**The loss comes with a win that is not in the instruction column at all.** On
+`bench/fib32.algo` the VM retires **99.83%** fewer D1 cache misses — **20,593 against
+11,901,112** — because a call frame is a slot range on a stack the VM already owns rather
+than a heap block per call. The cost sits in the branch columns instead: V mispredicts
+**2.6x to 19.1x** as often as H, one indirect dispatch that every instruction funnels
+through against a tree-walker's spread-out and individually predictable call sites.
+
+**Four limits on how far H → V may be read.** All four are stated in full in
+[*Boundary of the claim*](docs/MEASUREMENT.md#boundary-of-the-claim), which is the one place
+in this repository whose job is to say what the attribution does *not* establish:
+
+- **It is an upper bound on what replacing the back end did, not an attribution of what the
+  architecture is worth.** A fifth ablation for locality was cut, so locality sits inside
+  this step unlabelled rather than priced beside it. An upper bound on a mixed result bounds
+  the losses too, so this is not a hedge in the flattering direction.
+- **N → V is never quoted on its own**, here or anywhere else in the repository.
+- **The controlled *cache* comparison is V against its own `V-tree` control, not V against
+  H.** V's command line gains an argument and its binary links four translation units H's
+  does not, and both move the cache columns; the 20,593-against-11,901,112 figure above is
+  stated across that control for exactly this reason. `V-tree` prices the boundary at a
+  fixed **+4,053** instructions (**+4,017** on `vars`) — a constant, not a rate — which is
+  why the instruction column carries H → V and the cache columns do not.
+- **No IPC figure exists here and none may be derived.** The `perf` columns are empty in all
+  68 rows of the ledger, and wall clock is narrative — it is not divided into the instruction
+  count to manufacture one.
 
 ---
 
