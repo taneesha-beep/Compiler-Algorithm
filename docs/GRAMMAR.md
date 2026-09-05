@@ -1,7 +1,8 @@
 # Algo — language reference
 
 > **Scope of this file.** The whole of the language: its **grammar**, its
-> **precedence and associativity**, and its **integer and overflow semantics**.
+> **precedence and associativity**, its **integer and overflow semantics**, and the
+> **errors it can raise** with the exit code each one carries.
 > Item 1.5 wrote the overflow third; item 6.3 added the grammar and the
 > precedence table. The instruction set the second back end compiles this
 > language to is [`docs/BYTECODE.md`](BYTECODE.md); how the two back ends are
@@ -338,6 +339,61 @@ overstating it.
 Removing the check is deliberately **not** one of the ablations. Every ablation
 preserves what a program computes and changes only how fast; this one would
 change the answers.
+
+## Errors and exit codes
+
+Every error is written to **stderr** as a diagnostic carrying the file, line and column it
+came from, the source line echoed, and a caret under the offending span:
+
+```
+$ ./build/algo error_undef.algo
+error_undef.algo:1:7: error: variable 'z' used before assignment
+print z
+      ^
+```
+
+The span comes from the stage that raised the error; the path and the source text come from
+the driver, which is the only part of the program that has them. Exit codes are
+sysexits-style: `0` success, `64` bad command line, `65` compile-time error, `66` unreadable
+input file, `70` runtime fault.
+
+**The class of the exception thrown decides between 65 and 70, so the throw site picks the
+code and not the catch site. A fault settled by the source text alone is compile-time; one
+that depends on what the program computed is a runtime fault.**
+
+| Error                 | Example input               | Message                                        | Exit |
+| --------------------- | --------------------------- | ---------------------------------------------- | ---- |
+| Unknown character     | `x = 5 @ 3`                 | `unknown character '@'`                        | 65   |
+| Syntax error          | `x 5`                       | `expected '=' after variable name`             | 65   |
+| Use before assignment | `print z` (no prior assign) | `variable 'z' used before assignment`          | 65   |
+| Literal out of range  | `print 9223372036854775808` | `integer literal out of range: 9223372036854775808` | 65 |
+| Division by zero      | `x = 5 / 0`                 | `division by zero`                             | 70   |
+| Arithmetic overflow   | `print 9223372036854775807 + 1` | `integer overflow in '+'`                  | 70   |
+| Type mismatch         | `print true + 1`            | `operator '+' cannot be applied to boolean and integer` | 70 |
+| Non-boolean condition | `while 1 { … }`             | `a condition must be a boolean, not integer`   | 70   |
+| Unclosed block        | `if true { print 1`         | `expected '}' to close this block`             | 65   |
+| Wrong arity           | `add(1, 2, 3)` for `fn add(a, b)` | `function 'add' expects 2 arguments, but 3 were given` | 65 |
+| Unknown function      | `print nope(1)`             | `unknown function 'nope'`                      | 65   |
+| Function as a value   | `print f` for `fn f()`      | `'f' is a function, not a value`               | 65   |
+| Variable as a function| `x = 1` then `print x(2)`   | `'x' is a variable, not a function`            | 65   |
+| Function not top level| `if true { fn f() { } }`    | `a function may only be declared at the top level` | 65 |
+| `return` outside a function | `return 1`            | `'return' outside of a function`               | 65   |
+| Duplicate parameter   | `fn f(a, a) { … }`          | `duplicate parameter 'a'`                      | 65   |
+| Duplicate function    | two `fn f`                  | `duplicate function 'f'`                       | 65   |
+| Frame boundary        | a top-level name read inside a function | `variable 'total' used inside a function, where only parameters and locals are in scope` | 65 |
+| Call depth exceeded   | unbounded recursion         | `call depth exceeded`                          | 70   |
+| Missing argument      | `./algo`                    | `no input file`                                | 64   |
+| File not found        | `./algo missing.algo`       | `could not open file: missing.algo`            | 66   |
+
+A literal too wide for the value type is classed **compile-time**: it is a property of the token's text, not of anything the program computes. It is detected at parse time, with the conversion, so it fires on every literal in the file — including one inside a function that is never called. A type mismatch is classed the opposite way for the same reason read in reverse: with no type checker in the language, whether an operand has the right type depends on what the program computed, so it is a runtime fault.
+
+The two call errors fall on the same line for the same reason. An argument count is settled by the source text alone — the call site says how many, the declaration says how many — so a wrong arity is a **compile-time** error. How deep a chain of calls actually gets depends on what the program computed, so an exhausted call depth is a **runtime** fault. That limit exists because unbounded recursion would otherwise exhaust the C++ stack and kill the process on a signal, with no diagnostic and no exit code at all.
+
+**Both engines render every one of these identically** — message, caret and exit code. The
+virtual machine duplicates the tree-walker's fault messages rather than sharing them, so
+that the two agree by test rather than by construction, and all 29 golden cases in `tests/`
+run under both. `tests/diagnostic_test.cpp` pins every message, caret and code, and is the
+specification for this section.
 
 ## Verifying this
 
